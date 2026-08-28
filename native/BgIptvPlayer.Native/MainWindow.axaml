@@ -46,7 +46,10 @@
         <ListBox Grid.Row="3" x:Name="GroupList" SelectionChanged="GroupList_SelectionChanged">
           <ListBox.ItemTemplate><DataTemplate x:DataType="local:ChannelGroup"><Grid ColumnDefinitions="*,Auto" Margin="10,8"><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" Foreground="#C0C6D3"/><TextBlock Grid.Column="1" Text="{Binding Count}" Foreground="#626C7F" FontSize="11" Margin="8,0,0,0"/></Grid></DataTemplate></ListBox.ItemTemplate>
         </ListBox>
-        <Button Grid.Row="4" Content="⚙  Ayarlar" Click="ShowSettings_Click" HorizontalAlignment="Stretch" Margin="0,18,0,0"/>
+        <StackPanel Grid.Row="4" Spacing="8" Margin="0,18,0,0">
+          <Button Content="⚙  Ayarlar" Click="ShowSettings_Click" HorizontalAlignment="Stretch"/>
+          <Button Content="ⓘ  Hakkında" Click="ShowAbout_Click" HorizontalAlignment="Stretch"/>
+        </StackPanel>
       </Grid>
     </Border>
 
@@ -134,6 +137,44 @@
               </DataTemplate>
             </ListBox.ItemTemplate>
           </ListBox>
+        </Grid>
+      </Border>
+    </Grid>
+
+    <Grid x:Name="AboutPage" Grid.Column="1" Margin="46,36" IsVisible="False">
+      <Border MaxWidth="820" HorizontalAlignment="Center" VerticalAlignment="Center" Background="#0F131C" BorderBrush="#282F40" BorderThickness="1" CornerRadius="22" Padding="38">
+        <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto">
+          <Grid ColumnDefinitions="96,*">
+            <Image Source="avares://BG-IPTV-Player/Assets/app-icon.png" Width="82" Height="82" HorizontalAlignment="Left"/>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="18,0,0,0">
+              <TextBlock Text="BG IPTV Player" FontSize="31" FontWeight="Bold"/>
+              <Border Background="#24203D" CornerRadius="7" Padding="9,4" HorizontalAlignment="Left" Margin="0,9,0,0"><TextBlock x:Name="AboutVersionText" Text="Sürüm 1.0.1" Foreground="#B5ADFF" FontSize="11" FontWeight="SemiBold"/></Border>
+            </StackPanel>
+          </Grid>
+          <TextBlock Grid.Row="1" Text="M3U ve IPTV listelerini hızlı, düzenli ve uygulama içinde oynatmak için geliştirilmiş modern Windows masaüstü uygulaması." TextWrapping="Wrap" Foreground="#AAB2C3" FontSize="14" LineHeight="22" Margin="0,25,0,0"/>
+          <Border Grid.Row="2" Height="1" Background="#282F40" Margin="0,25,0,25"/>
+          <Grid Grid.Row="3" ColumnDefinitions="*,*" ColumnSpacing="30">
+            <StackPanel>
+              <TextBlock Text="GELİŞTİREN" Foreground="#7166F0" FontSize="10" FontWeight="Bold" LetterSpacing="1.6"/>
+              <TextBlock Text="Berk Güçlükol" FontSize="19" FontWeight="SemiBold" Margin="0,8,0,0"/>
+              <TextBlock Text="Tasarım · Geliştirme · Ürün" Foreground="#748095" FontSize="11" Margin="0,5,0,0"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1">
+              <TextBlock Text="TEKNOLOJİLER" Foreground="#7166F0" FontSize="10" FontWeight="Bold" LetterSpacing="1.6"/>
+              <TextBlock Text="C# · .NET 8 · Avalonia UI" FontSize="15" FontWeight="SemiBold" Margin="0,8,0,0"/>
+              <TextBlock Text="LibVLCSharp video motoru" Foreground="#748095" FontSize="11" Margin="0,5,0,0"/>
+            </StackPanel>
+          </Grid>
+          <Border Grid.Row="4" Background="#121824" CornerRadius="12" Padding="16" Margin="0,26,0,0">
+            <TextBlock Text="Oynatma listeleri ve uygulama ayarları yalnızca bu bilgisayarda saklanır. BG IPTV Player herhangi bir kanal veya playlist sağlamaz." TextWrapping="Wrap" Foreground="#8994A8" FontSize="11" LineHeight="17"/>
+          </Border>
+          <Grid Grid.Row="5" ColumnDefinitions="*,Auto" Margin="0,25,0,0">
+            <TextBlock Text="© 2026 Berk Güçlükol · MIT Lisansı" Foreground="#687286" FontSize="11" VerticalAlignment="Center"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
+              <Button Content="GitHub" Click="OpenGithub_Click" Background="#292448"/>
+              <Button Content="Kapat" Click="HideAbout_Click" Background="#6D5DFC"/>
+            </StackPanel>
+          </Grid>
         </Grid>
       </Border>
     </Grid>

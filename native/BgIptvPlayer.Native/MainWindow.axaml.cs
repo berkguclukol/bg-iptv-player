@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Reflection;
 using System.Text;
@@ -25,7 +26,7 @@ public partial class MainWindow : Window
     private static readonly string SettingsFilePath = Path.Combine(SettingsDirectory, "settings.json");
     private static readonly string LegacyPlaylistSettingPath = Path.Combine(SettingsDirectory, "playlist.txt");
     private static readonly string PlaylistCacheDirectory = Path.Combine(SettingsDirectory, "playlists");
-    private static readonly HttpClient PlaylistClient = new() { Timeout = TimeSpan.FromMinutes(10) };
+    private static readonly HttpClient PlaylistClient = CreatePlaylistClient();
     private static readonly HttpClient UpdateClient = CreateUpdateClient();
     private readonly LibVLC _libVlc;
     private readonly MediaPlayer _mediaPlayer;
@@ -43,6 +44,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        AboutVersionText.Text = $"Sürüm {(Assembly.GetExecutingAssembly().GetName().Version ?? new Version(1, 0, 1)).ToString(3)}";
         Timeline.AddHandler(PointerPressedEvent, Timeline_PointerPressed, RoutingStrategies.Tunnel, true);
         Timeline.AddHandler(PointerReleasedEvent, Timeline_PointerReleased, RoutingStrategies.Tunnel | RoutingStrategies.Bubble, true);
         Core.Initialize();
@@ -84,6 +86,15 @@ public partial class MainWindow : Window
         return client;
     }
 
+    private static HttpClient CreatePlaylistClient()
+    {
+        var handler = new HttpClientHandler { AutomaticDecompression = DecompressionMethods.All };
+        var client = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(10) };
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140 Safari/537.36");
+        client.DefaultRequestHeaders.Accept.ParseAdd("application/x-mpegURL, application/vnd.apple.mpegurl, text/plain, */*");
+        return client;
+    }
+
     private async void CheckForUpdatesAsync()
     {
         try
@@ -111,7 +122,7 @@ public partial class MainWindow : Window
     private void OpenUpdate_Click(object? sender, RoutedEventArgs e)
     {
         if (string.IsNullOrWhiteSpace(_availableUpdateUrl)) return;
-        Process.Start(new ProcessStartInfo(_availableUpdateUrl) { UseShellExecute = true });
+        OpenExternalUrl(_availableUpdateUrl);
     }
 
     private void DismissUpdate_Click(object? sender, RoutedEventArgs e) => UpdateBanner.IsVisible = false;
@@ -180,7 +191,7 @@ public partial class MainWindow : Window
 
         Directory.CreateDirectory(PlaylistCacheDirectory);
         var cachePath = Path.Combine(PlaylistCacheDirectory, $"{entry.Id}.m3u");
-        if (!forceRefresh && File.Exists(cachePath)) return cachePath;
+        if (!forceRefresh && IsM3uFile(cachePath)) return cachePath;
 
         PageTitle.Text = "Liste indiriliyor...";
         PlaybackStatus.Text = entry.Name;
@@ -203,8 +214,29 @@ public partial class MainWindow : Window
                     : $"İndiriliyor {received / 1024d / 1024d:0.0} MB";
             }
         }
+        if (!IsM3uFile(tempPath))
+        {
+            File.Delete(tempPath);
+            throw new InvalidDataException("Sunucu geçerli bir M3U listesi döndürmedi.");
+        }
         File.Move(tempPath, cachePath, true);
         return cachePath;
+    }
+
+    private static bool IsM3uFile(string path)
+    {
+        if (!File.Exists(path) || new FileInfo(path).Length < 7) return false;
+        try
+        {
+            using var reader = new StreamReader(path, Encoding.UTF8, true, 4096);
+            for (var i = 0; i < 5 && reader.ReadLine() is { } line; i++)
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                return line.TrimStart('\uFEFF').StartsWith("#EXTM3U", StringComparison.OrdinalIgnoreCase);
+            }
+        }
+        catch { }
+        return false;
     }
 
     private async Task LoadPlaylistAsync(string path, string? displayName = null)
@@ -482,13 +514,38 @@ public partial class MainWindow : Window
         if (_isPlayerFullscreen) SetPlayerFullscreen(false);
         RefreshPlaylistSettingsView();
         ContentArea.IsVisible = false;
+        AboutPage.IsVisible = false;
         SettingsPage.IsVisible = true;
     }
 
     private void HideSettings()
     {
         SettingsPage.IsVisible = false;
+        AboutPage.IsVisible = false;
         ContentArea.IsVisible = true;
+    }
+
+    private void ShowAbout_Click(object? sender, RoutedEventArgs e)
+    {
+        if (_isPlayerFullscreen) SetPlayerFullscreen(false);
+        ContentArea.IsVisible = false;
+        SettingsPage.IsVisible = false;
+        AboutPage.IsVisible = true;
+    }
+
+    private void HideAbout_Click(object? sender, RoutedEventArgs e)
+    {
+        AboutPage.IsVisible = false;
+        ContentArea.IsVisible = true;
+    }
+
+    private void OpenGithub_Click(object? sender, RoutedEventArgs e) =>
+        OpenExternalUrl("https://github.com/berkguclukol/bg-iptv-player");
+
+    private static void OpenExternalUrl(string url)
+    {
+        try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
+        catch { }
     }
 
     private async void ActivatePlaylist_Click(object? sender, RoutedEventArgs e)
