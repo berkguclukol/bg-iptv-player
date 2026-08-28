@@ -24,8 +24,8 @@
 ## Kurulum
 
 1. [En güncel Release'i indirin](https://github.com/berkguclukol/bg-iptv-player/releases/latest).
-2. ZIP dosyasını bir klasöre çıkarın.
-3. `BG-IPTV-Player.exe` dosyasını çalıştırın.
+2. Önerilen `BG-IPTV-Player-v1.0.0-Setup-x64.exe` kurulum dosyasını çalıştırın.
+3. Alternatif olarak taşınabilir ZIP paketini bir klasöre çıkarıp `BG-IPTV-Player.exe` dosyasını açın.
 
 Windows 10/11 x64 desteklenir. Paket kendi .NET çalışma ortamını ve video motorunu içerir; ayrıca .NET veya VLC kurmanız gerekmez.
 
