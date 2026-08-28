@@ -1,6 +1,12 @@
-# BG IPTV Player
+<div align="center">
+  <img src="native/BgIptvPlayer.Native/Assets/app-icon.png" width="128" alt="BG IPTV Player ikonu">
+  <h1>BG IPTV Player</h1>
+  <p>Windows için hızlı, yerel ve modern M3U/IPTV oynatıcısı.</p>
 
-Windows için hızlı, yerel ve sade bir M3U/IPTV oynatıcısı.
+  [![Latest Release](https://img.shields.io/github/v/release/berkguclukol/bg-iptv-player?color=7c6cff&label=release)](https://github.com/berkguclukol/bg-iptv-player/releases/latest)
+  [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-168bff)](https://github.com/berkguclukol/bg-iptv-player/releases/latest)
+  [![License](https://img.shields.io/github/license/berkguclukol/bg-iptv-player)](LICENSE)
+</div>
 
 ## Özellikler
 
@@ -13,12 +19,19 @@ Windows için hızlı, yerel ve sade bir M3U/IPTV oynatıcısı.
 - Film ve videolarda ileri–geri sarma
 - Ses, duraklatma ve fare hareketinde görünen tam ekran kontrolleri
 - Kanal logoları ve logosuz kanallar için otomatik simge
+- Uygulama açılışında yeni GitHub Release sürümü kontrolü
 
 ## Kurulum
 
-En güncel Windows paketini [Releases](../../releases) sayfasından indirin. ZIP dosyasını bir klasöre çıkarın ve `BG-IPTV-Player.exe` dosyasını çalıştırın.
+1. [En güncel Release'i indirin](https://github.com/berkguclukol/bg-iptv-player/releases/latest).
+2. ZIP dosyasını bir klasöre çıkarın.
+3. `BG-IPTV-Player.exe` dosyasını çalıştırın.
 
-Windows 10/11 x64 desteklenir. Paket kendi .NET çalışma ortamını ve video motorunu içerir; ayrıca VLC kurmanız gerekmez.
+Windows 10/11 x64 desteklenir. Paket kendi .NET çalışma ortamını ve video motorunu içerir; ayrıca .NET veya VLC kurmanız gerekmez.
+
+## Playlist ekleme
+
+**Ayarlar → Oynatma Listeleri** bölümüne girin. Playlist URL'sini yapıştırıp ekleyebilir veya **Dosyadan ekle** seçeneğini kullanabilirsiniz. URL listesinin güncel kopyasını almak için yanındaki **Yenile** düğmesine basın.
 
 ## Kaynaktan çalıştırma
 
@@ -29,15 +42,16 @@ cd native/BgIptvPlayer.Native
 dotnet run
 ```
 
+Teknolojiler: C# · .NET 8 · Avalonia UI · LibVLCSharp
+
 ## Gizlilik
 
 Oynatma listeleri ve indirilen liste önbelleği yalnızca bilgisayarınızdaki `%LOCALAPPDATA%\BgIptvPlayer` klasöründe tutulur. Projeye veya herhangi bir sunucuya gönderilmez.
 
 ## Yasal kullanım
 
-Uygulama yalnızca erişim hakkınız bulunan yayın ve medya listeleriyle kullanılmalıdır. Proje herhangi bir kanal veya oynatma listesi sağlamaz.
+BG IPTV Player herhangi bir kanal, yayın veya oynatma listesi sağlamaz. Uygulamayı yalnızca erişim ve izleme hakkınız bulunan içeriklerle kullanın.
 
 ## Lisans
 
-MIT
-
+[MIT Lisansı](LICENSE)

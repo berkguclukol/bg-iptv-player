@@ -137,5 +137,17 @@
         </Grid>
       </Border>
     </Grid>
+
+    <Border x:Name="UpdateBanner" Grid.Column="1" IsVisible="False" HorizontalAlignment="Right" VerticalAlignment="Top"
+            Margin="38,20,38,0" Padding="16,12" CornerRadius="12" Background="#191630" BorderBrush="#6D5DFC" BorderThickness="1" ZIndex="20">
+      <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="12">
+        <StackPanel VerticalAlignment="Center">
+          <TextBlock x:Name="UpdateTitle" Text="Yeni sürüm hazır" FontWeight="Bold" FontSize="14"/>
+          <TextBlock Text="İndirmek için GitHub Release sayfasını açın." Foreground="#A6AEC0" FontSize="10" Margin="0,3,0,0"/>
+        </StackPanel>
+        <Button Grid.Column="1" Content="İndir" Click="OpenUpdate_Click" Background="#6D5DFC" VerticalAlignment="Center"/>
+        <Button Grid.Column="2" Content="✕" Click="DismissUpdate_Click" Padding="10,8" VerticalAlignment="Center"/>
+      </Grid>
+    </Border>
   </Grid>
 </Window>

@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -24,6 +26,7 @@ public partial class MainWindow : Window
     private static readonly string LegacyPlaylistSettingPath = Path.Combine(SettingsDirectory, "playlist.txt");
     private static readonly string PlaylistCacheDirectory = Path.Combine(SettingsDirectory, "playlists");
     private static readonly HttpClient PlaylistClient = new() { Timeout = TimeSpan.FromMinutes(10) };
+    private static readonly HttpClient UpdateClient = CreateUpdateClient();
     private readonly LibVLC _libVlc;
     private readonly MediaPlayer _mediaPlayer;
     private readonly DispatcherTimer _fullscreenControlsTimer;
@@ -34,6 +37,7 @@ public partial class MainWindow : Window
     private ContentKind _selectedContent = ContentKind.Live;
     private bool _isPlayerFullscreen;
     private bool _isSeeking;
+    private string? _availableUpdateUrl;
     private WindowState _previousWindowState = WindowState.Normal;
 
     public MainWindow()
@@ -67,9 +71,50 @@ public partial class MainWindow : Window
         var argument = Environment.GetCommandLineArgs().Skip(1).FirstOrDefault(File.Exists);
         if (argument is not null) AddOrActivatePlaylist(argument);
         var active = _playlists.FirstOrDefault(p => p.IsActive);
+        Dispatcher.UIThread.Post(CheckForUpdatesAsync);
         if (argument is not null) Dispatcher.UIThread.Post(async () => await LoadPlaylistAsync(argument));
         else if (active is not null) Dispatcher.UIThread.Post(async () => await LoadPlaylistEntryAsync(active));
     }
+
+    private static HttpClient CreateUpdateClient()
+    {
+        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("BG-IPTV-Player/1.0");
+        client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+        return client;
+    }
+
+    private async void CheckForUpdatesAsync()
+    {
+        try
+        {
+            using var response = await UpdateClient.GetAsync("https://api.github.com/repos/berkguclukol/bg-iptv-player/releases/latest");
+            if (!response.IsSuccessStatusCode) return;
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var tag = json.RootElement.GetProperty("tag_name").GetString();
+            var url = json.RootElement.GetProperty("html_url").GetString();
+            if (string.IsNullOrWhiteSpace(tag) || string.IsNullOrWhiteSpace(url)) return;
+            if (!Version.TryParse(tag.TrimStart('v', 'V').Split('-', 2)[0], out var latest)) return;
+            var current = Assembly.GetExecutingAssembly().GetName().Version ?? new Version(1, 0, 0);
+            if (latest <= current) return;
+
+            _availableUpdateUrl = url;
+            UpdateTitle.Text = $"BG IPTV Player {tag} hazır";
+            UpdateBanner.IsVisible = true;
+        }
+        catch
+        {
+            // Güncelleme kontrolü uygulamanın açılışını ve oynatmayı etkilemez.
+        }
+    }
+
+    private void OpenUpdate_Click(object? sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_availableUpdateUrl)) return;
+        Process.Start(new ProcessStartInfo(_availableUpdateUrl) { UseShellExecute = true });
+    }
+
+    private void DismissUpdate_Click(object? sender, RoutedEventArgs e) => UpdateBanner.IsVisible = false;
 
     private async void RefreshPlaylist_Click(object? sender, RoutedEventArgs e)
     {
