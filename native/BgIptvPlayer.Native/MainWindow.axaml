@@ -156,7 +156,7 @@
             <Image Source="avares://BG-IPTV-Player/Assets/app-icon.png" Width="82" Height="82" HorizontalAlignment="Left"/>
             <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="18,0,0,0">
               <TextBlock Text="BG IPTV Player" FontSize="31" FontWeight="Bold"/>
-              <Border Background="#24203D" CornerRadius="7" Padding="9,4" HorizontalAlignment="Left" Margin="0,9,0,0"><TextBlock x:Name="AboutVersionText" Text="Sürüm 1.0.1" Foreground="#B5ADFF" FontSize="11" FontWeight="SemiBold"/></Border>
+              <Border Background="#24203D" CornerRadius="7" Padding="9,4" HorizontalAlignment="Left" Margin="0,9,0,0"><TextBlock x:Name="AboutVersionText" Text="Sürüm 1.0.2" Foreground="#B5ADFF" FontSize="11" FontWeight="SemiBold"/></Border>
             </StackPanel>
           </Grid>
           <TextBlock Grid.Row="1" Text="M3U ve IPTV listelerini hızlı, düzenli ve uygulama içinde oynatmak için geliştirilmiş modern Windows masaüstü uygulaması." TextWrapping="Wrap" Foreground="#AAB2C3" FontSize="14" LineHeight="22" Margin="0,25,0,0"/>
@@ -179,6 +179,8 @@
           <Grid Grid.Row="5" ColumnDefinitions="*,Auto" Margin="0,25,0,0">
             <TextBlock Text="© 2026 Berk Güçlükol · MIT Lisansı" Foreground="#687286" FontSize="11" VerticalAlignment="Center"/>
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
+              <Button Content="Web Sitesi" Click="OpenHomepage_Click" Background="#1D2940" ToolTip.Tip="BG IPTV Player web sitesini aç"/>
+              <Button Content="Gizlilik" Click="OpenPrivacy_Click" Background="#1D2940" ToolTip.Tip="Gizlilik politikasını aç"/>
               <Button Content="GitHub" Click="OpenGithub_Click" Background="#292448"/>
               <Button Content="Kapat" Click="HideAbout_Click" Background="#6D5DFC"/>
             </StackPanel>

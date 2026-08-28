@@ -46,7 +46,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        AboutVersionText.Text = $"Sürüm {(Assembly.GetExecutingAssembly().GetName().Version ?? new Version(1, 0, 1)).ToString(3)}";
+        AboutVersionText.Text = $"Sürüm {(Assembly.GetExecutingAssembly().GetName().Version ?? new Version(1, 0, 2)).ToString(3)}";
         Timeline.AddHandler(PointerPressedEvent, Timeline_PointerPressed, RoutingStrategies.Tunnel, true);
         Timeline.AddHandler(PointerReleasedEvent, Timeline_PointerReleased, RoutingStrategies.Tunnel | RoutingStrategies.Bubble, true);
         Core.Initialize();
@@ -550,6 +550,12 @@ public partial class MainWindow : Window
 
     private void OpenGithub_Click(object? sender, RoutedEventArgs e) =>
         OpenExternalUrl("https://github.com/berkguclukol/bg-iptv-player");
+
+    private void OpenHomepage_Click(object? sender, RoutedEventArgs e) =>
+        OpenExternalUrl("https://bgiptvplayer.guclukol.net/");
+
+    private void OpenPrivacy_Click(object? sender, RoutedEventArgs e) =>
+        OpenExternalUrl("https://bgiptvplayer.guclukol.net/privacy.html");
 
     private static void OpenExternalUrl(string url)
     {

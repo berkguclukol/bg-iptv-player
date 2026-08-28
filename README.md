@@ -48,6 +48,10 @@ Teknolojiler: C# · .NET 8 · Avalonia UI · LibVLCSharp
 
 Oynatma listeleri ve indirilen liste önbelleği yalnızca bilgisayarınızdaki `%LOCALAPPDATA%\BgIptvPlayer` klasöründe tutulur. Projeye veya herhangi bir sunucuya gönderilmez.
 
+Ayrıntılar için [Gizlilik Politikası](https://bgiptvplayer.guclukol.net/privacy.html) sayfasını inceleyin.
+
+Web sitesi: [bgiptvplayer.guclukol.net](https://bgiptvplayer.guclukol.net/)
+
 ## Yasal kullanım
 
 BG IPTV Player herhangi bir kanal, yayın veya oynatma listesi sağlamaz. Uygulamayı yalnızca erişim ve izleme hakkınız bulunan içeriklerle kullanın.
