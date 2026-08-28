@@ -88,7 +88,15 @@
               <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Margin="0,8,0,0">
                 <StackPanel VerticalAlignment="Center"><TextBlock x:Name="NowPlaying" Text="İzlemek için bir kanal seçin" FontSize="17" FontWeight="SemiBold"/><TextBlock x:Name="PlaybackStatus" Text="Hazır" Foreground="#748095" FontSize="11" Margin="0,4,0,0"/></StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                  <TextBlock Text="SES" Foreground="#677187" FontSize="9" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,2,0"/>
+                  <Button x:Name="VolumeButton" Classes="playerAction" Click="VolumeButton_Click" ToolTip.Tip="Sesi kapat / aç">
+                    <Viewbox Width="22" Height="22">
+                      <Canvas Width="24" Height="24">
+                        <Path Data="M3,9 L7,9 L12,5 L12,19 L7,15 L3,15 Z" Fill="#F4F6FC"/>
+                        <Path x:Name="VolumeWaveIcon" Data="M15,8.5 C16.3,9.4 17,10.6 17,12 C17,13.4 16.3,14.6 15,15.5 M18,5.5 C20,7.2 21,9.4 21,12 C21,14.6 20,16.8 18,18.5" Stroke="#F4F6FC" StrokeThickness="1.8" StrokeLineCap="Round"/>
+                        <Path x:Name="VolumeMutedIcon" Data="M15,9 L21,15 M21,9 L15,15" Stroke="#F4F6FC" StrokeThickness="2" StrokeLineCap="Round" IsVisible="False"/>
+                      </Canvas>
+                    </Viewbox>
+                  </Button>
                   <Slider x:Name="VolumeSlider" Minimum="0" Maximum="100" Value="80" Width="105" ValueChanged="VolumeSlider_ValueChanged" VerticalAlignment="Center"/>
                   <Button x:Name="PlayPauseButton" Classes="playerAction" Click="PlayPause_Click" IsEnabled="False" ToolTip.Tip="Oynat / Duraklat">
                     <Path x:Name="PlayPauseIcon" Data="M3,2 L7,2 L7,18 L3,18 Z M13,2 L17,2 L17,18 L13,18 Z" Fill="#F4F6FC" Width="20" Height="20" Stretch="Uniform"/>

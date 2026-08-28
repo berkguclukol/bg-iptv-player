@@ -36,8 +36,10 @@ public partial class MainWindow : Window
     private List<PlaylistEntry> _playlists = [];
     private string _selectedGroup = "Tümü";
     private ContentKind _selectedContent = ContentKind.Live;
+    private ContentKind _playingContent = ContentKind.Live;
     private bool _isPlayerFullscreen;
     private bool _isSeeking;
+    private double _lastAudibleVolume = 80;
     private string? _availableUpdateUrl;
     private WindowState _previousWindowState = WindowState.Normal;
 
@@ -63,7 +65,7 @@ public partial class MainWindow : Window
         _mediaPlayer.EncounteredError += (_, _) => SetStatus("Yayın açılamadı; kaynak çevrimdışı olabilir.");
         _mediaPlayer.TimeChanged += (_, e) => UpdateTimeline(e.Time, _mediaPlayer.Length);
         _mediaPlayer.LengthChanged += (_, e) => UpdateTimeline(_mediaPlayer.Time, e.Length);
-        _mediaPlayer.SeekableChanged += (_, e) => Dispatcher.UIThread.Post(() => Timeline.IsEnabled = e.Seekable != 0 && _mediaPlayer.Length > 0);
+        _mediaPlayer.SeekableChanged += (_, e) => Dispatcher.UIThread.Post(() => Timeline.IsEnabled = _playingContent != ContentKind.Live && e.Seekable != 0 && _mediaPlayer.Length > 0);
         Closed += (_, _) => { _media?.Dispose(); _mediaPlayer.Dispose(); _libVlc.Dispose(); };
 
         _playlists = LoadPlaylistSettings();
@@ -367,6 +369,7 @@ public partial class MainWindow : Window
         _media.AddOption(":network-caching=1800");
         _media.AddOption(":http-reconnect");
         NowPlaying.Text = channel.Name;
+        _playingContent = channel.Kind;
         PlaybackStatus.Text = "Yayına bağlanılıyor...";
         PlayPauseButton.IsEnabled = true;
         PlayPauseIcon.Data = Avalonia.Media.Geometry.Parse("M3,2 L7,2 L7,18 L3,18 Z M13,2 L17,2 L17,18 L13,18 Z");
@@ -395,7 +398,13 @@ public partial class MainWindow : Window
     private void VolumeSlider_ValueChanged(object? sender, Avalonia.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
         if (_mediaPlayer is not null) _mediaPlayer.Volume = (int)e.NewValue;
+        if (e.NewValue > 0) _lastAudibleVolume = e.NewValue;
+        if (VolumeWaveIcon is not null) VolumeWaveIcon.IsVisible = e.NewValue > 0;
+        if (VolumeMutedIcon is not null) VolumeMutedIcon.IsVisible = e.NewValue <= 0;
     }
+
+    private void VolumeButton_Click(object? sender, RoutedEventArgs e) =>
+        VolumeSlider.Value = VolumeSlider.Value > 0 ? 0 : Math.Max(1, _lastAudibleVolume);
 
     private void Timeline_PointerPressed(object? sender, PointerPressedEventArgs e) => _isSeeking = true;
 
@@ -408,7 +417,7 @@ public partial class MainWindow : Window
 
     private void UpdateTimeline(long time, long length) => Dispatcher.UIThread.Post(() =>
     {
-        if (length <= 0 || !_mediaPlayer.IsSeekable)
+        if (_playingContent == ContentKind.Live || length <= 0 || !_mediaPlayer.IsSeekable)
         {
             Timeline.IsEnabled = false;
             TimelinePanel.IsVisible = false;
