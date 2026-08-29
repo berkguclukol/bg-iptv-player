@@ -2,91 +2,99 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:BgIptvPlayer.Native"
         x:Class="BgIptvPlayer.Native.MainWindow"
-        Title="BG IPTV Player" Icon="avares://BG-IPTV-Player/Assets/app-icon.png" Width="1280" Height="820" MinWidth="980" MinHeight="650"
-        Background="#080B12" FontFamily="avares://Avalonia.Fonts.Inter/Assets#Inter"
+        Title="BG IPTV Player" Icon="avares://BG-IPTV-Player/Assets/app-icon.png" Width="1360" Height="860" MinWidth="1080" MinHeight="680"
+        Background="#0D0B16" FontFamily="avares://Avalonia.Fonts.Inter/Assets#Inter"
         KeyDown="Window_KeyDown" PointerMoved="Window_PointerMoved">
   <Window.Styles>
     <Style Selector="Button">
-      <Setter Property="Background" Value="#171C27"/><Setter Property="Foreground" Value="#E8EBF3"/>
-      <Setter Property="BorderThickness" Value="0"/><Setter Property="CornerRadius" Value="9"/>
-      <Setter Property="Padding" Value="14,10"/>
+      <Setter Property="Background" Value="#211D30"/><Setter Property="Foreground" Value="#F5F2FA"/>
+      <Setter Property="BorderBrush" Value="#352F48"/><Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="10"/>
+      <Setter Property="Padding" Value="14,10"/><Setter Property="FontWeight" Value="SemiBold"/>
     </Style>
+    <Style Selector="Button:pointerover"><Setter Property="Background" Value="#302942"/><Setter Property="BorderBrush" Value="#645A7C"/></Style>
     <Style Selector="Button.playerAction">
-      <Setter Property="Width" Value="42"/><Setter Property="Height" Value="42"/>
-      <Setter Property="Padding" Value="0"/><Setter Property="CornerRadius" Value="21"/>
-      <Setter Property="Background" Value="#242B3A"/><Setter Property="Foreground" Value="#F4F6FC"/>
+      <Setter Property="Width" Value="40"/><Setter Property="Height" Value="40"/>
+      <Setter Property="Padding" Value="0"/><Setter Property="CornerRadius" Value="20"/>
+      <Setter Property="BorderThickness" Value="0"/><Setter Property="Background" Value="#312A42"/><Setter Property="Foreground" Value="#F8F5FA"/>
       <Setter Property="FontSize" Value="17"/><Setter Property="FontWeight" Value="SemiBold"/>
     </Style>
-    <Style Selector="Button.playerAction:pointerover"><Setter Property="Background" Value="#6D5DFC"/></Style>
-    <Style Selector="Button.playerAction:pressed"><Setter Property="Background" Value="#5547D9"/></Style>
+    <Style Selector="Button.playerAction:pointerover"><Setter Property="Background" Value="#735CF4"/></Style>
+    <Style Selector="Button.playerAction:pressed"><Setter Property="Background" Value="#5D48DB"/></Style>
+    <Style Selector="Button.playerAction.primary"><Setter Property="Width" Value="48"/><Setter Property="Height" Value="48"/><Setter Property="CornerRadius" Value="24"/><Setter Property="Background" Value="#735CF4"/></Style>
     <Style Selector="Button.sectionButton">
-      <Setter Property="Padding" Value="13,7"/><Setter Property="CornerRadius" Value="8"/>
-      <Setter Property="Background" Value="#151A25"/><Setter Property="Foreground" Value="#8993A7"/>
-      <Setter Property="FontSize" Value="11"/><Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="MinWidth" Value="136"/><Setter Property="Padding" Value="18,12"/><Setter Property="CornerRadius" Value="11"/>
+      <Setter Property="Background" Value="#171421"/><Setter Property="BorderBrush" Value="#2D273D"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Foreground" Value="#938BA4"/>
+      <Setter Property="FontSize" Value="12"/><Setter Property="FontWeight" Value="SemiBold"/>
     </Style>
-    <Style Selector="Button.sectionButton.active"><Setter Property="Background" Value="#6D5DFC"/><Setter Property="Foreground" Value="White"/></Style>
+    <Style Selector="Button.sectionButton:pointerover"><Setter Property="Background" Value="#252034"/><Setter Property="BorderBrush" Value="#514668"/></Style>
+    <Style Selector="Button.sectionButton.active"><Setter Property="Background" Value="#302655"/><Setter Property="BorderBrush" Value="#826AF8"/><Setter Property="Foreground" Value="#C9BDFF"/></Style>
+    <Style Selector="Button.backButton"><Setter Property="Padding" Value="8,5"/><Setter Property="MinWidth" Value="34"/><Setter Property="Background" Value="#272136"/><Setter Property="BorderThickness" Value="0"/><Setter Property="Foreground" Value="#C8BFFF"/></Style>
     <Style Selector="TextBox">
-      <Setter Property="Background" Value="#111620"/><Setter Property="Foreground" Value="White"/>
-      <Setter Property="BorderBrush" Value="#293142"/><Setter Property="CornerRadius" Value="10"/>
-      <Setter Property="Padding" Value="14,10"/>
+      <Setter Property="Background" Value="#171421"/><Setter Property="Foreground" Value="White"/>
+      <Setter Property="BorderBrush" Value="#342E45"/><Setter Property="CornerRadius" Value="11"/>
+      <Setter Property="Padding" Value="15,11"/>
     </Style>
     <Style Selector="ListBox"><Setter Property="Background" Value="Transparent"/><Setter Property="BorderThickness" Value="0"/></Style>
-    <Style Selector="ListBoxItem"><Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="0,2"/><Setter Property="CornerRadius" Value="8"/></Style>
+    <Style Selector="ListBoxItem"><Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="0,3"/><Setter Property="CornerRadius" Value="10"/></Style>
+    <Style Selector="ListBoxItem:selected"><Setter Property="Background" Value="#312753"/></Style>
+    <Style Selector="ListBoxItem:pointerover"><Setter Property="Background" Value="#241F32"/></Style>
   </Window.Styles>
 
   <Grid x:Name="RootGrid" ColumnDefinitions="248,*">
-    <Border x:Name="Sidebar" Grid.Column="0" Background="#0B0E15" BorderBrush="#202633" BorderThickness="0,0,1,0" Padding="18,26">
+    <Border x:Name="Sidebar" Grid.Column="0" Background="#14111E" BorderBrush="#2A2438" BorderThickness="0,0,1,0" Padding="18,22">
       <Grid RowDefinitions="Auto,Auto,Auto,*,Auto">
-        <StackPanel Orientation="Horizontal" Spacing="12" Margin="10,0,0,28">
-          <Border Width="40" Height="40" CornerRadius="12" Background="#6D5DFC"><TextBlock Text="▶" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="18"/></Border>
-          <StackPanel VerticalAlignment="Center"><TextBlock Text="BG IPTV" FontSize="17" FontWeight="Bold"/><TextBlock Text="PLAYER · NATIVE" FontSize="8" LetterSpacing="2" Foreground="#747E91"/></StackPanel>
+        <StackPanel Orientation="Horizontal" Spacing="12" Margin="8,0,0,26">
+          <Image Source="avares://BG-IPTV-Player/Assets/app-icon.png" Width="42" Height="42"/>
+          <StackPanel VerticalAlignment="Center"><TextBlock Text="BG IPTV Player" FontSize="16" FontWeight="Bold"/><TextBlock Text="WINDOWS PLAYER" FontSize="8" LetterSpacing="1.7" Foreground="#777181" Margin="0,3,0,0"/></StackPanel>
         </StackPanel>
-        <Button Grid.Row="1" x:Name="PlaylistButton" Content="↻  Aktif listeyi yenile" Click="RefreshPlaylist_Click" HorizontalAlignment="Stretch" Margin="0,0,0,22"/>
-        <TextBlock Grid.Row="2" Text="GRUPLAR" Foreground="#596274" FontWeight="Bold" FontSize="10" LetterSpacing="1.5" Margin="10,0,0,8"/>
+        <Button Grid.Row="1" x:Name="PlaylistButton" Content="↻  Oynatma listesini yenile" Click="RefreshPlaylist_Click" HorizontalAlignment="Stretch" Margin="0,0,0,22" Background="#1C1828"/>
+        <Grid Grid.Row="2" ColumnDefinitions="*,Auto" Margin="10,0,10,8"><TextBlock Text="GRUPLAR" Foreground="#706A78" FontWeight="Bold" FontSize="10" LetterSpacing="1.5"/><TextBlock Grid.Column="1" Text="≡" Foreground="#777181" FontSize="14"/></Grid>
         <ListBox Grid.Row="3" x:Name="GroupList" SelectionChanged="GroupList_SelectionChanged">
-          <ListBox.ItemTemplate><DataTemplate x:DataType="local:ChannelGroup"><Grid ColumnDefinitions="*,Auto" Margin="10,8"><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" Foreground="#C0C6D3"/><TextBlock Grid.Column="1" Text="{Binding Count}" Foreground="#626C7F" FontSize="11" Margin="8,0,0,0"/></Grid></DataTemplate></ListBox.ItemTemplate>
+          <ListBox.ItemTemplate><DataTemplate x:DataType="local:ChannelGroup"><Grid ColumnDefinitions="Auto,*,Auto" Margin="11,9"><Border Width="7" Height="7" CornerRadius="4" Background="#7B63F3" VerticalAlignment="Center" Margin="0,0,10,0"/><TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" Foreground="#D7D1DE" ToolTip.Tip="{Binding Name}"/><Border Grid.Column="2" Background="#292338" CornerRadius="6" Padding="7,3" Margin="8,0,0,0"><TextBlock Text="{Binding Count}" Foreground="#9B92A7" FontSize="10"/></Border></Grid></DataTemplate></ListBox.ItemTemplate>
         </ListBox>
         <StackPanel Grid.Row="4" Spacing="8" Margin="0,18,0,0">
-          <Button Content="⚙  Ayarlar" Click="ShowSettings_Click" HorizontalAlignment="Stretch"/>
-          <Button Content="ⓘ  Hakkında" Click="ShowAbout_Click" HorizontalAlignment="Stretch"/>
+          <Button Content="⚙  Ayarlar" Click="ShowSettings_Click" HorizontalAlignment="Stretch" Background="Transparent" BorderThickness="0"/>
+          <Button Content="ⓘ  Hakkında" Click="ShowAbout_Click" HorizontalAlignment="Stretch" Background="Transparent" BorderThickness="0"/>
         </StackPanel>
       </Grid>
     </Border>
 
-    <Grid x:Name="ContentArea" Grid.Column="1" Margin="38,30" RowDefinitions="Auto,*">
-      <Grid x:Name="HeaderPanel" ColumnDefinitions="*,300" Margin="0,0,0,20">
-        <StackPanel>
-          <TextBlock Text="MEDYA KÜTÜPHANESİ" Foreground="#7C6CFF" FontSize="10" FontWeight="Bold" LetterSpacing="2"/>
-          <TextBlock x:Name="PageTitle" Text="Canlı TV" FontSize="28" FontWeight="Bold" Margin="0,4,0,9"/>
-          <StackPanel Orientation="Horizontal" Spacing="7">
-            <Button x:Name="LiveSectionButton" Classes="sectionButton active" Content="CANLI TV" Click="LiveSection_Click"/>
-            <Button x:Name="MovieSectionButton" Classes="sectionButton" Content="FİLMLER" Click="MovieSection_Click"/>
-            <Button x:Name="SeriesSectionButton" Classes="sectionButton" Content="DİZİLER" Click="SeriesSection_Click"/>
+    <Grid x:Name="ContentArea" Grid.Column="1" Margin="24,20,24,24" RowDefinitions="Auto,*">
+      <Grid x:Name="HeaderPanel" RowDefinitions="Auto,Auto" Margin="0,0,0,16">
+        <Grid ColumnDefinitions="*,360">
+          <StackPanel VerticalAlignment="Center">
+            <TextBlock Text="MEDYA KÜTÜPHANESİ" Foreground="#8E78FF" FontSize="9" FontWeight="Bold" LetterSpacing="1.8"/>
+            <TextBlock x:Name="PageTitle" Text="Canlı TV" FontSize="25" FontWeight="Bold" Margin="0,4,0,0"/>
           </StackPanel>
+          <TextBox Grid.Column="1" x:Name="SearchBox" Watermark="Kanal veya içerik ara..." TextChanged="SearchBox_TextChanged" VerticalAlignment="Center"/>
+        </Grid>
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center" Margin="0,14,0,0">
+          <Button x:Name="LiveSectionButton" Classes="sectionButton active" Content="▣  CANLI TV" Click="LiveSection_Click"/>
+          <Button x:Name="MovieSectionButton" Classes="sectionButton" Content="▤  FİLMLER" Click="MovieSection_Click"/>
+          <Button x:Name="SeriesSectionButton" Classes="sectionButton" Content="▰  DİZİLER" Click="SeriesSection_Click"/>
         </StackPanel>
-        <TextBox Grid.Column="1" x:Name="SearchBox" Watermark="Kanal ara..." TextChanged="SearchBox_TextChanged" VerticalAlignment="Center"/>
       </Grid>
 
-      <Grid x:Name="ContentBody" Grid.Row="1" ColumnDefinitions="380,*" ColumnSpacing="20">
-        <Border x:Name="ChannelPanel" Background="#0F131C" BorderBrush="#222A38" BorderThickness="1" CornerRadius="15">
-          <Grid RowDefinitions="50,*">
-            <Grid ColumnDefinitions="*,Auto" Margin="16,0"><TextBlock x:Name="ChannelCount" Text="0 kanal" VerticalAlignment="Center" Foreground="#AAB1C0"/><TextBlock Grid.Column="1" Text="İsme göre" VerticalAlignment="Center" Foreground="#596273" FontSize="11"/></Grid>
+      <Grid x:Name="ContentBody" Grid.Row="1" ColumnDefinitions="330,*" ColumnSpacing="16">
+        <Border x:Name="ChannelPanel" Background="#14111E" BorderBrush="#2D273A" BorderThickness="1" CornerRadius="14">
+          <Grid RowDefinitions="54,*">
+            <Grid ColumnDefinitions="Auto,*,Auto" Margin="14,0"><Button x:Name="SeriesBackButton" Classes="backButton" Content="←" Click="SeriesBack_Click" IsVisible="False" VerticalAlignment="Center" Margin="0,0,9,0"/><StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center"><TextBlock x:Name="BrowserTitle" Text="KANALLAR" FontSize="10" FontWeight="Bold" LetterSpacing="1.2" Foreground="#DCD6E3"/><Border Width="6" Height="6" CornerRadius="3" Background="#FF805F"/></StackPanel><TextBlock Grid.Column="2" x:Name="ChannelCount" Text="0 kanal" VerticalAlignment="Center" Foreground="#847B90" FontSize="10"/></Grid>
             <ListBox Grid.Row="1" x:Name="ChannelList" SelectionChanged="ChannelList_SelectionChanged" Margin="6">
-              <ListBox.ItemTemplate><DataTemplate x:DataType="local:Channel"><Grid ColumnDefinitions="44,*,Auto" Margin="8,7"><local:ChannelLogo Width="40" Height="40" LogoUrl="{Binding LogoUrl}" Initials="{Binding Initials}"/><StackPanel Grid.Column="1" Margin="11,1,6,0"><TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/><TextBlock Text="{Binding Group}" Foreground="#697386" FontSize="10" Margin="0,4,0,0"/></StackPanel><TextBlock Grid.Column="2" Text="{Binding Badge}" Foreground="#70D6A2" FontSize="9" VerticalAlignment="Center"/></Grid></DataTemplate></ListBox.ItemTemplate>
+              <ListBox.ItemTemplate><DataTemplate x:DataType="local:MediaBrowserItem"><Grid ColumnDefinitions="48,*,Auto" Margin="9,8" ToolTip.Tip="{Binding Name}"><local:ChannelLogo Width="44" Height="44" LogoUrl="{Binding LogoUrl}" Initials="{Binding Initials}"/><StackPanel Grid.Column="1" Margin="12,1,6,0"><TextBlock Text="{Binding Name}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Foreground="#F6F2F8"/><TextBlock Text="{Binding Subtitle}" Foreground="#847B90" FontSize="10" Margin="0,5,0,0" TextTrimming="CharacterEllipsis"/></StackPanel><Border Grid.Column="2" Background="#2B2539" CornerRadius="5" Padding="6,3" VerticalAlignment="Center"><TextBlock Text="{Binding Badge}" Foreground="#B9ABFF" FontSize="8" FontWeight="Bold"/></Border></Grid></DataTemplate></ListBox.ItemTemplate>
             </ListBox>
           </Grid>
         </Border>
 
-        <Border x:Name="PlayerPanel" Grid.Column="1" Background="#0F131C" BorderBrush="#222A38" BorderThickness="1" CornerRadius="15" ClipToBounds="True">
+        <Border x:Name="PlayerPanel" Grid.Column="1" Background="#12101A" BorderBrush="#2D273A" BorderThickness="1" CornerRadius="14" ClipToBounds="True">
           <Grid x:Name="PlayerLayout" RowDefinitions="*,82">
             <Border Background="Black"><local:NativeVlcHost x:Name="PlayerView"/></Border>
-            <Grid x:Name="PlayerControls" Grid.Row="1" RowDefinitions="Auto,*" Margin="20,10,20,13">
+            <Grid x:Name="PlayerControls" Grid.Row="1" RowDefinitions="Auto,*" Margin="18,9,18,11">
               <Grid x:Name="TimelinePanel" ColumnDefinitions="*,Auto" VerticalAlignment="Center" IsVisible="False">
                 <Slider x:Name="Timeline" Minimum="0" Maximum="1" Value="0" IsEnabled="False"/>
-                <TextBlock Grid.Column="1" x:Name="TimeLabel" Text="CANLI" Foreground="#748095" FontSize="10" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1" x:Name="TimeLabel" Text="CANLI" Foreground="#8B8492" FontSize="10" Margin="12,0,0,0" VerticalAlignment="Center"/>
               </Grid>
               <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Margin="0,8,0,0">
-                <StackPanel VerticalAlignment="Center"><TextBlock x:Name="NowPlaying" Text="İzlemek için bir kanal seçin" FontSize="17" FontWeight="SemiBold"/><TextBlock x:Name="PlaybackStatus" Text="Hazır" Foreground="#748095" FontSize="11" Margin="0,4,0,0"/></StackPanel>
+                <StackPanel VerticalAlignment="Center"><StackPanel Orientation="Horizontal" Spacing="8"><Border Background="#40251F" CornerRadius="5" Padding="7,3" VerticalAlignment="Center"><TextBlock x:Name="PlaybackKindBadge" Text="HAZIR" Foreground="#FF926F" FontSize="8" FontWeight="Bold"/></Border><TextBlock x:Name="NowPlaying" Text="İzlemek için bir kanal seçin" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/></StackPanel><TextBlock x:Name="PlaybackStatus" Text="Hazır" Foreground="#8A8294" FontSize="10" Margin="0,5,0,0"/></StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                   <Button x:Name="VolumeButton" Classes="playerAction" Click="VolumeButton_Click" ToolTip.Tip="Sesi kapat / aç">
                     <Viewbox Width="22" Height="22">
@@ -98,7 +106,7 @@
                     </Viewbox>
                   </Button>
                   <Slider x:Name="VolumeSlider" Minimum="0" Maximum="100" Value="80" Width="105" ValueChanged="VolumeSlider_ValueChanged" VerticalAlignment="Center"/>
-                  <Button x:Name="PlayPauseButton" Classes="playerAction" Click="PlayPause_Click" IsEnabled="False" ToolTip.Tip="Oynat / Duraklat">
+                  <Button x:Name="PlayPauseButton" Classes="playerAction primary" Click="PlayPause_Click" IsEnabled="False" ToolTip.Tip="Oynat / Duraklat">
                     <Path x:Name="PlayPauseIcon" Data="M3,2 L7,2 L7,18 L3,18 Z M13,2 L17,2 L17,18 L13,18 Z" Fill="#F4F6FC" Width="20" Height="20" Stretch="Uniform"/>
                   </Button>
                   <Button x:Name="FullscreenButton" Classes="playerAction" Click="Fullscreen_Click" ToolTip.Tip="Tam ekran">
@@ -114,29 +122,29 @@
 
     <Grid x:Name="SettingsPage" Grid.Column="1" Margin="38,30" IsVisible="False" RowDefinitions="Auto,Auto,*">
       <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,24">
-        <StackPanel><TextBlock Text="UYGULAMA" Foreground="#7C6CFF" FontSize="10" FontWeight="Bold" LetterSpacing="2"/><TextBlock Text="Oynatma Listeleri" FontSize="30" FontWeight="Bold" Margin="0,5,0,0"/><TextBlock Text="Liste adresini ekleyin; yalnızca siz yenilediğinizde tekrar indirilir." Foreground="#748095" Margin="0,7,0,0"/></StackPanel>
+        <StackPanel><TextBlock Text="UYGULAMA" Foreground="#8E78FF" FontSize="10" FontWeight="Bold" LetterSpacing="2"/><TextBlock Text="Oynatma Listeleri" FontSize="30" FontWeight="Bold" Margin="0,5,0,0"/><TextBlock Text="Liste adresini ekleyin; yalnızca siz yenilediğinizde tekrar indirilir." Foreground="#817A88" Margin="0,7,0,0"/></StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
           <Button Content="Dosyadan ekle" Click="AddPlaylistFile_Click"/>
           <Button Content="Kapat" Click="HideSettings_Click"/>
         </StackPanel>
       </Grid>
-      <Border Grid.Row="1" Background="#0F131C" BorderBrush="#292452" BorderThickness="1" CornerRadius="15" Padding="18" Margin="0,0,0,16">
+      <Border Grid.Row="1" Background="#14111E" BorderBrush="#332B47" BorderThickness="1" CornerRadius="15" Padding="18" Margin="0,0,0,16">
         <Grid ColumnDefinitions="220,*,Auto" RowDefinitions="Auto,Auto">
-          <TextBlock Grid.ColumnSpan="3" Text="URL İLE LİSTE EKLE" Foreground="#8F83FF" FontSize="10" FontWeight="Bold" LetterSpacing="1.5" Margin="2,0,0,11"/>
+          <TextBlock Grid.ColumnSpan="3" Text="URL İLE LİSTE EKLE" Foreground="#A999FF" FontSize="10" FontWeight="Bold" LetterSpacing="1.5" Margin="2,0,0,11"/>
           <TextBox Grid.Row="1" x:Name="PlaylistNameBox" Watermark="Liste adı (isteğe bağlı)" Margin="0,0,10,0"/>
           <TextBox Grid.Row="1" Grid.Column="1" x:Name="PlaylistUrlBox" Watermark="https://ornek.com/playlist.m3u" Margin="0,0,10,0"/>
-          <Button Grid.Row="1" Grid.Column="2" Content="＋ URL'yi ekle" Click="AddPlaylistUrl_Click" Background="#6D5DFC"/>
+          <Button Grid.Row="1" Grid.Column="2" Content="＋ URL'yi ekle" Click="AddPlaylistUrl_Click" Background="#634EDB" BorderBrush="#8E78FF"/>
         </Grid>
       </Border>
-      <Border Grid.Row="2" Background="#0F131C" BorderBrush="#222A38" BorderThickness="1" CornerRadius="15" Padding="14">
+      <Border Grid.Row="2" Background="#14111E" BorderBrush="#2D273A" BorderThickness="1" CornerRadius="15" Padding="14">
         <Grid RowDefinitions="Auto,*">
           <Grid ColumnDefinitions="*,Auto" Margin="10,4,10,14"><TextBlock Text="KAYITLI LİSTELER" Foreground="#697386" FontSize="10" FontWeight="Bold" LetterSpacing="1.5"/><TextBlock Grid.Column="1" x:Name="PlaylistCountText" Foreground="#697386" FontSize="11"/></Grid>
           <ListBox Grid.Row="1" x:Name="PlaylistSettingsList">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="local:PlaylistEntry">
-                <Border Background="#151A24" BorderBrush="#252D3C" BorderThickness="1" CornerRadius="12" Padding="16" Margin="4">
+                <Border Background="#1A1725" BorderBrush="#312B41" BorderThickness="1" CornerRadius="12" Padding="16" Margin="4">
                   <Grid ColumnDefinitions="*,Auto,Auto,Auto">
-                    <StackPanel><StackPanel Orientation="Horizontal" Spacing="8"><TextBlock Text="{Binding Name}" FontSize="15" FontWeight="SemiBold"/><Border Background="#24203D" CornerRadius="5" Padding="6,2"><TextBlock Text="{Binding SourceTypeText}" Foreground="#AFA6FF" FontSize="9"/></Border></StackPanel><TextBlock Text="{Binding Path}" Foreground="#697386" FontSize="10" TextTrimming="CharacterEllipsis" MaxWidth="560" Margin="0,5,0,0"/></StackPanel>
+                    <StackPanel><StackPanel Orientation="Horizontal" Spacing="8"><TextBlock Text="{Binding Name}" FontSize="15" FontWeight="SemiBold"/><Border Background="#302752" CornerRadius="5" Padding="6,2"><TextBlock Text="{Binding SourceTypeText}" Foreground="#BBAEFF" FontSize="9"/></Border></StackPanel><TextBlock Text="{Binding Path}" Foreground="#777080" FontSize="10" TextTrimming="CharacterEllipsis" MaxWidth="560" Margin="0,5,0,0"/></StackPanel>
                     <Button Grid.Column="1" Content="Yenile" Click="RefreshSavedPlaylist_Click" CommandParameter="{Binding}" Margin="12,0,0,0"/>
                     <Button Grid.Column="2" Content="{Binding ActiveText}" Click="ActivatePlaylist_Click" CommandParameter="{Binding}" Margin="8,0,0,0"/>
                     <Button Grid.Column="3" Content="Kaldır" Click="RemovePlaylist_Click" CommandParameter="{Binding}" Margin="8,0,0,0" Background="#2A1820" Foreground="#FF9BAF"/>
@@ -150,25 +158,25 @@
     </Grid>
 
     <Grid x:Name="AboutPage" Grid.Column="1" Margin="46,36" IsVisible="False">
-      <Border MaxWidth="820" HorizontalAlignment="Center" VerticalAlignment="Center" Background="#0F131C" BorderBrush="#282F40" BorderThickness="1" CornerRadius="22" Padding="38">
+      <Border MaxWidth="820" HorizontalAlignment="Center" VerticalAlignment="Center" Background="#14111E" BorderBrush="#312B41" BorderThickness="1" CornerRadius="22" Padding="38">
         <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto">
           <Grid ColumnDefinitions="96,*">
             <Image Source="avares://BG-IPTV-Player/Assets/app-icon.png" Width="82" Height="82" HorizontalAlignment="Left"/>
             <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="18,0,0,0">
               <TextBlock Text="BG IPTV Player" FontSize="31" FontWeight="Bold"/>
-              <Border Background="#24203D" CornerRadius="7" Padding="9,4" HorizontalAlignment="Left" Margin="0,9,0,0"><TextBlock x:Name="AboutVersionText" Text="Sürüm 1.0.2" Foreground="#B5ADFF" FontSize="11" FontWeight="SemiBold"/></Border>
+              <Border Background="#302752" CornerRadius="7" Padding="9,4" HorizontalAlignment="Left" Margin="0,9,0,0"><TextBlock x:Name="AboutVersionText" Text="Sürüm 1.0.2" Foreground="#BBAEFF" FontSize="11" FontWeight="SemiBold"/></Border>
             </StackPanel>
           </Grid>
           <TextBlock Grid.Row="1" Text="M3U ve IPTV listelerini hızlı, düzenli ve uygulama içinde oynatmak için geliştirilmiş modern Windows masaüstü uygulaması." TextWrapping="Wrap" Foreground="#AAB2C3" FontSize="14" LineHeight="22" Margin="0,25,0,0"/>
           <Border Grid.Row="2" Height="1" Background="#282F40" Margin="0,25,0,25"/>
           <Grid Grid.Row="3" ColumnDefinitions="*,*" ColumnSpacing="30">
             <StackPanel>
-              <TextBlock Text="GELİŞTİREN" Foreground="#7166F0" FontSize="10" FontWeight="Bold" LetterSpacing="1.6"/>
+              <TextBlock Text="GELİŞTİREN" Foreground="#8E78FF" FontSize="10" FontWeight="Bold" LetterSpacing="1.6"/>
               <TextBlock Text="Berk Güçlükol" FontSize="19" FontWeight="SemiBold" Margin="0,8,0,0"/>
               <TextBlock Text="Tasarım · Geliştirme · Ürün" Foreground="#748095" FontSize="11" Margin="0,5,0,0"/>
             </StackPanel>
             <StackPanel Grid.Column="1">
-              <TextBlock Text="TEKNOLOJİLER" Foreground="#7166F0" FontSize="10" FontWeight="Bold" LetterSpacing="1.6"/>
+              <TextBlock Text="TEKNOLOJİLER" Foreground="#8E78FF" FontSize="10" FontWeight="Bold" LetterSpacing="1.6"/>
               <TextBlock Text="C# · .NET 8 · Avalonia UI" FontSize="15" FontWeight="SemiBold" Margin="0,8,0,0"/>
               <TextBlock Text="LibVLCSharp video motoru" Foreground="#748095" FontSize="11" Margin="0,5,0,0"/>
             </StackPanel>
@@ -182,7 +190,7 @@
               <Button Content="Web Sitesi" Click="OpenHomepage_Click" Background="#1D2940" ToolTip.Tip="BG IPTV Player web sitesini aç"/>
               <Button Content="Gizlilik" Click="OpenPrivacy_Click" Background="#1D2940" ToolTip.Tip="Gizlilik politikasını aç"/>
               <Button Content="GitHub" Click="OpenGithub_Click" Background="#292448"/>
-              <Button Content="Kapat" Click="HideAbout_Click" Background="#6D5DFC"/>
+              <Button Content="Kapat" Click="HideAbout_Click" Background="#634EDB" BorderBrush="#8E78FF"/>
             </StackPanel>
           </Grid>
         </Grid>
@@ -190,13 +198,13 @@
     </Grid>
 
     <Border x:Name="UpdateBanner" Grid.Column="1" IsVisible="False" HorizontalAlignment="Right" VerticalAlignment="Top"
-            Margin="38,20,38,0" Padding="16,12" CornerRadius="12" Background="#191630" BorderBrush="#6D5DFC" BorderThickness="1" ZIndex="20">
+            Margin="38,20,38,0" Padding="16,12" CornerRadius="12" Background="#241C3B" BorderBrush="#826AF8" BorderThickness="1" ZIndex="20">
       <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="12">
         <StackPanel VerticalAlignment="Center">
           <TextBlock x:Name="UpdateTitle" Text="Yeni sürüm hazır" FontWeight="Bold" FontSize="14"/>
           <TextBlock Text="İndirmek için GitHub Release sayfasını açın." Foreground="#A6AEC0" FontSize="10" Margin="0,3,0,0"/>
         </StackPanel>
-        <Button Grid.Column="1" Content="İndir" Click="OpenUpdate_Click" Background="#6D5DFC" VerticalAlignment="Center"/>
+        <Button Grid.Column="1" Content="İndir" Click="OpenUpdate_Click" Background="#634EDB" BorderBrush="#8E78FF" VerticalAlignment="Center"/>
         <Button Grid.Column="2" Content="✕" Click="DismissUpdate_Click" Padding="10,8" VerticalAlignment="Center"/>
       </Grid>
     </Border>

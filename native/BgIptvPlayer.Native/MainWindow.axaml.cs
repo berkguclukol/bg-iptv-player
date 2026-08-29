@@ -34,9 +34,12 @@ public partial class MainWindow : Window
     private Media? _media;
     private List<Channel> _channels = [];
     private List<PlaylistEntry> _playlists = [];
-    private string _selectedGroup = "Tümü";
+    private string _selectedGroup = "";
     private ContentKind _selectedContent = ContentKind.Live;
     private ContentKind _playingContent = ContentKind.Live;
+    private SeriesBrowserLevel _seriesBrowserLevel = SeriesBrowserLevel.Shows;
+    private string? _selectedSeriesTitle;
+    private int? _selectedSeriesSeason;
     private bool _isPlayerFullscreen;
     private bool _isSeeking;
     private double _lastAudibleVolume = 80;
@@ -294,24 +297,68 @@ public partial class MainWindow : Window
 
     private static ContentKind ClassifyContent(string url, string group, string name)
     {
-        var source = $"{group} {name}".ToUpperInvariant();
         var address = url.ToLowerInvariant();
-        if (address.Contains("/series/") || ContainsAny(source, "DİZİ", "DIZI", "SERIES", "TV SHOW", "SEZON", "SEASON")) return ContentKind.Series;
-        if (address.Contains("/movie/") || ContainsAny(source, "FİLM", "FILM", "MOVIE", "SİNEMA", "SINEMA", "VOD")) return ContentKind.Movie;
+        if (ContainsAny(address, "/series/", "type=series", "stream_type=series")) return ContentKind.Series;
+        if (ContainsAny(address, "/movie/", "type=movie", "stream_type=movie", "type=vod", "stream_type=vod")) return ContentKind.Movie;
+        if (ContainsAny(address, "/live/", "type=live", "stream_type=live")) return ContentKind.Live;
+
+        var category = NormalizeClassifierText(group);
+        var title = NormalizeClassifierText(name);
+
+        // Some providers use these groups for linear/24-hour channels even when
+        // the group name also contains words such as DIZI or SINEMA.
+        if (category.StartsWith("▱", StringComparison.Ordinal) ||
+            category.StartsWith("▰", StringComparison.Ordinal) ||
+            category.StartsWith("TR:", StringComparison.Ordinal) ||
+            ContainsAny(category, "CANLI", "LIVE", "RADYO", "MOBESE", "RAW 50 FPS"))
+            return ContentKind.Live;
+
+        // Episode notation is stronger evidence than a generic word in a title.
+        if (Regex.IsMatch(title, @"\bS\s*\d{1,3}\s*E\s*\d{1,4}\b|\b\d{1,3}\s*X\s*\d{1,4}\b|\bSEZON\s*\d+.*\bBOLUM\s*\d+\b", RegexOptions.CultureInvariant))
+            return ContentKind.Series;
+
+        if (ContainsAny(category,
+                "DIZI", "SERIES", "TV SHOW", "SEZON", "SEASON", "ANIME DIZI", "EGITIM SETLERI"))
+            return ContentKind.Series;
+
+        if (category.StartsWith("4K", StringComparison.Ordinal) || ContainsAny(category,
+                "FILM", "MOVIE", "SINEMA", "VOD", "VIZYON", "YESILCAM", "MUBI", "IMDB", "BOLLYWOOD",
+                "KLASIK", "WESTERN", "AKSIYON", "MACERA", "GIZEM", "DRAM", "KOMEDI", "ROMANTIK",
+                "KORKU", "PSIKOLOJIK", "BILIM KURGU", "FANTASTIK", "POLISIYE", "SUC", "SAVAS", "TARIH",
+                "ANIMASYON", "BELGESEL", "BLURAY", "ALTYAZILI", "NOSTALJI", "FOR ADULT", "YETISKIN",
+                "EROTIC", "AILE", "STAND-UP", "TIYATRO", "ONERILER"))
+            return ContentKind.Movie;
+
         return ContentKind.Live;
     }
+
+    private static string NormalizeClassifierText(string value) => value
+        .Trim()
+        .ToUpperInvariant()
+        .Replace('İ', 'I')
+        .Replace('Ş', 'S')
+        .Replace('Ç', 'C')
+        .Replace('Ğ', 'G')
+        .Replace('Ü', 'U')
+        .Replace('Ö', 'O');
 
     private static bool ContainsAny(string value, params string[] terms) => terms.Any(value.Contains);
 
     private void RefreshGroups()
     {
-        _selectedGroup = "Tümü";
+        ResetSeriesBrowser();
         var sectionChannels = _channels.Where(c => c.Kind == _selectedContent).ToList();
-        var groups = sectionChannels.GroupBy(c => c.Group).Select(g => new ChannelGroup(g.Key, g.Count())).OrderBy(g => g.Name).ToList();
-        groups.Insert(0, new ChannelGroup("Tümü", sectionChannels.Count));
+        var groups = sectionChannels
+            .GroupBy(c => c.Group)
+            .Select(g => new ChannelGroup(g.Key, g.Count()))
+            .OrderBy(g => ContainsAdult(g.Name) ? 1 : 0)
+            .ThenBy(g => g.Name, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+
         GroupList.ItemsSource = groups;
-        GroupList.SelectedIndex = 0;
-        PageTitle.Text = ContentTitle(_selectedContent);
+        _selectedGroup = groups.FirstOrDefault()?.Name ?? "";
+        GroupList.SelectedIndex = groups.Count > 0 ? 0 : -1;
+        PageTitle.Text = groups.Count > 0 ? groups[0].Name : ContentTitle(_selectedContent);
         ApplyFilter();
     }
 
@@ -319,7 +366,8 @@ public partial class MainWindow : Window
     {
         if (GroupList.SelectedItem is not ChannelGroup group) return;
         _selectedGroup = group.Name;
-        PageTitle.Text = group.Name == "Tümü" ? ContentTitle(_selectedContent) : group.Name;
+        ResetSeriesBrowser();
+        PageTitle.Text = group.Name;
         ApplyFilter();
     }
 
@@ -355,20 +403,136 @@ public partial class MainWindow : Window
     private void ApplyFilter()
     {
         var query = SearchBox.Text?.Trim() ?? "";
-        var visible = _channels.Where(c => c.Kind == _selectedContent && (_selectedGroup == "Tümü" || c.Group == _selectedGroup) && (query.Length == 0 || c.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase))).ToList();
-        ChannelList.ItemsSource = visible;
-        ChannelCount.Text = $"{visible.Count:N0} kanal";
+        if (_selectedContent == ContentKind.Series)
+        {
+            ApplySeriesFilter(query);
+            return;
+        }
+
+        var channels = _channels
+            .Where(c => c.Kind == _selectedContent && c.Group == _selectedGroup &&
+                        (query.Length == 0 || c.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase)))
+            .ToList();
+        ChannelList.ItemsSource = channels.Select(MediaBrowserItem.FromChannel).ToList();
+        BrowserTitle.Text = _selectedContent == ContentKind.Movie ? "FİLMLER" : "KANALLAR";
+        SeriesBackButton.IsVisible = false;
+        ChannelCount.Text = _selectedContent == ContentKind.Movie ? $"{channels.Count:N0} film" : $"{channels.Count:N0} kanal";
+    }
+
+    private static bool ContainsAdult(string value) =>
+        value.Contains("adult", StringComparison.OrdinalIgnoreCase);
+
+    private void ApplySeriesFilter(string query)
+    {
+        var groupEpisodes = _channels
+            .Where(c => c.Kind == ContentKind.Series && c.Group == _selectedGroup)
+            .ToList();
+
+        if (_seriesBrowserLevel == SeriesBrowserLevel.Shows)
+        {
+            var shows = groupEpisodes
+                .GroupBy(c => c.Series.Title, StringComparer.CurrentCultureIgnoreCase)
+                .Where(g => query.Length == 0 ||
+                            g.Key.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
+                            g.Any(c => c.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase)))
+                .OrderBy(g => g.Key, StringComparer.CurrentCultureIgnoreCase)
+                .Select(MediaBrowserItem.FromSeries)
+                .ToList();
+            ChannelList.ItemsSource = shows;
+            BrowserTitle.Text = "DİZİLER";
+            SeriesBackButton.IsVisible = false;
+            ChannelCount.Text = $"{shows.Count:N0} dizi";
+            return;
+        }
+
+        var seriesEpisodes = groupEpisodes
+            .Where(c => string.Equals(c.Series.Title, _selectedSeriesTitle, StringComparison.CurrentCultureIgnoreCase))
+            .ToList();
+
+        if (_seriesBrowserLevel == SeriesBrowserLevel.Seasons)
+        {
+            var seasons = seriesEpisodes
+                .GroupBy(c => c.Series.Season)
+                .OrderBy(g => g.Key.HasValue ? 0 : 1)
+                .ThenBy(g => g.Key)
+                .Select(g => MediaBrowserItem.FromSeason(_selectedSeriesTitle ?? "Dizi", g.Key, g.Count(), g.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c.LogoUrl))?.LogoUrl))
+                .ToList();
+            ChannelList.ItemsSource = seasons;
+            BrowserTitle.Text = _selectedSeriesTitle?.ToUpperInvariant() ?? "SEZONLAR";
+            SeriesBackButton.IsVisible = true;
+            ChannelCount.Text = $"{seasons.Count:N0} sezon";
+            return;
+        }
+
+        var episodes = seriesEpisodes
+            .Where(c => c.Series.Season == _selectedSeriesSeason &&
+                        (query.Length == 0 || c.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase)))
+            .OrderBy(c => c.Series.Episode ?? int.MaxValue)
+            .ThenBy(c => c.Name, StringComparer.CurrentCultureIgnoreCase)
+            .Select(MediaBrowserItem.FromEpisode)
+            .ToList();
+        ChannelList.ItemsSource = episodes;
+        BrowserTitle.Text = _selectedSeriesSeason.HasValue ? $"SEZON {_selectedSeriesSeason}" : "DİĞER BÖLÜMLER";
+        SeriesBackButton.IsVisible = true;
+        ChannelCount.Text = $"{episodes.Count:N0} bölüm";
+    }
+
+    private void ResetSeriesBrowser()
+    {
+        _seriesBrowserLevel = SeriesBrowserLevel.Shows;
+        _selectedSeriesTitle = null;
+        _selectedSeriesSeason = null;
+        if (SeriesBackButton is not null) SeriesBackButton.IsVisible = false;
+    }
+
+    private void SeriesBack_Click(object? sender, RoutedEventArgs e)
+    {
+        if (_seriesBrowserLevel == SeriesBrowserLevel.Episodes)
+        {
+            _seriesBrowserLevel = SeriesBrowserLevel.Seasons;
+            _selectedSeriesSeason = null;
+        }
+        else if (_seriesBrowserLevel == SeriesBrowserLevel.Seasons)
+        {
+            ResetSeriesBrowser();
+        }
+
+        SearchBox.Text = "";
+        PageTitle.Text = _seriesBrowserLevel == SeriesBrowserLevel.Shows ? _selectedGroup : _selectedSeriesTitle ?? _selectedGroup;
+        ApplyFilter();
     }
 
     private void ChannelList_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
-        if (ChannelList.SelectedItem is not Channel channel) return;
+        if (ChannelList.SelectedItem is not MediaBrowserItem item) return;
+        if (item.Kind == MediaBrowserItemKind.Series)
+        {
+            _selectedSeriesTitle = item.SeriesTitle;
+            _seriesBrowserLevel = SeriesBrowserLevel.Seasons;
+            PageTitle.Text = item.Name;
+            ChannelList.SelectedIndex = -1;
+            ApplyFilter();
+            return;
+        }
+
+        if (item.Kind == MediaBrowserItemKind.Season)
+        {
+            _selectedSeriesSeason = item.Season;
+            _seriesBrowserLevel = SeriesBrowserLevel.Episodes;
+            PageTitle.Text = item.Name;
+            ChannelList.SelectedIndex = -1;
+            ApplyFilter();
+            return;
+        }
+
+        if (item.Channel is not { } channel) return;
         _mediaPlayer.Stop();
         _media?.Dispose();
         _media = new Media(_libVlc, new Uri(channel.Url));
         _media.AddOption(":network-caching=1800");
         _media.AddOption(":http-reconnect");
         NowPlaying.Text = channel.Name;
+        PlaybackKindBadge.Text = channel.Badge;
         _playingContent = channel.Kind;
         PlaybackStatus.Text = "Yayına bağlanılıyor...";
         PlayPauseButton.IsEnabled = true;
@@ -496,12 +660,12 @@ public partial class MainWindow : Window
         {
             WindowState = _previousWindowState == WindowState.FullScreen ? WindowState.Normal : _previousWindowState;
             RootGrid.ColumnDefinitions = new ColumnDefinitions("248,*");
-            ContentArea.Margin = new Avalonia.Thickness(38, 30);
-            ContentBody.ColumnDefinitions = new ColumnDefinitions("380,*");
-            ContentBody.ColumnSpacing = 20;
+            ContentArea.Margin = new Avalonia.Thickness(24, 20, 24, 24);
+            ContentBody.ColumnDefinitions = new ColumnDefinitions("330,*");
+            ContentBody.ColumnSpacing = 16;
             Grid.SetColumn(PlayerPanel, 1);
             Grid.SetColumnSpan(PlayerPanel, 1);
-            PlayerPanel.CornerRadius = new Avalonia.CornerRadius(15);
+            PlayerPanel.CornerRadius = new Avalonia.CornerRadius(14);
             PlayerPanel.BorderThickness = new Avalonia.Thickness(1);
             PlayerLayout.RowDefinitions = TimelinePanel.IsVisible ? new RowDefinitions("*,112") : new RowDefinitions("*,82");
             PlayerControls.IsVisible = true;
@@ -678,13 +842,108 @@ public partial class MainWindow : Window
 }
 
 public enum ContentKind { Live, Movie, Series }
+public enum SeriesBrowserLevel { Shows, Seasons, Episodes }
+public enum MediaBrowserItemKind { Channel, Series, Season, Episode }
 
 public sealed record Channel(string Name, string Url, string Group, string? LogoUrl, ContentKind Kind)
 {
     public string Initials => string.Concat(Name.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(p => p[0])).ToUpperInvariant();
     public string Badge => Kind switch { ContentKind.Movie => "FİLM", ContentKind.Series => "DİZİ", _ => "CANLI" };
+    public SeriesMetadata Series { get; } = SeriesMetadata.Parse(Name);
 }
 public sealed record ChannelGroup(string Name, int Count);
+
+public sealed record SeriesMetadata(string Title, int? Season, int? Episode)
+{
+    private static readonly Regex CompactPattern = new(
+        @"^(?<title>.*?)(?:\s*[-|:]\s*|\s+)S\s*(?<season>\d{1,3})\s*E\s*(?<episode>\d{1,4})(?:\b|\D.*$)",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex XPattern = new(
+        @"^(?<title>.*?)(?:\s*[-|:]\s*|\s+)(?<season>\d{1,3})\s*X\s*(?<episode>\d{1,4})(?:\b|\D.*$)",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex TurkishPattern = new(
+        @"^(?<title>.*?)(?:\s*[-|:]\s*|\s+)SEZON\s*(?<season>\d{1,3}).*?B[ÖO]L[ÜU]M\s*(?<episode>\d{1,4})(?:\b|\D.*$)",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    public static SeriesMetadata Parse(string name)
+    {
+        var match = CompactPattern.Match(name);
+        if (!match.Success) match = XPattern.Match(name);
+        if (!match.Success) match = TurkishPattern.Match(name);
+        if (!match.Success) return new SeriesMetadata(CleanTitle(name), null, null);
+
+        var title = CleanTitle(match.Groups["title"].Value);
+        if (title.Length == 0) return new SeriesMetadata(CleanTitle(name), null, null);
+
+        return new SeriesMetadata(
+            title,
+            int.Parse(match.Groups["season"].Value),
+            int.Parse(match.Groups["episode"].Value));
+    }
+
+    private static string CleanTitle(string title) =>
+        Regex.Replace(title.Replace('_', ' ').Replace('.', ' '), @"\s+", " ").Trim(' ', '-', '|', ':');
+}
+
+public sealed class MediaBrowserItem
+{
+    public MediaBrowserItemKind Kind { get; init; }
+    public string Name { get; init; } = "";
+    public string Subtitle { get; init; } = "";
+    public string Badge { get; init; } = "";
+    public string? LogoUrl { get; init; }
+    public Channel? Channel { get; init; }
+    public string? SeriesTitle { get; init; }
+    public int? Season { get; init; }
+    public string Initials => string.Concat(Name.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(p => p[0])).ToUpperInvariant();
+
+    public static MediaBrowserItem FromChannel(Channel channel) => new()
+    {
+        Kind = MediaBrowserItemKind.Channel,
+        Name = channel.Name,
+        Subtitle = channel.Group,
+        Badge = channel.Badge,
+        LogoUrl = channel.LogoUrl,
+        Channel = channel
+    };
+
+    public static MediaBrowserItem FromEpisode(Channel channel) => new()
+    {
+        Kind = MediaBrowserItemKind.Episode,
+        Name = channel.Name,
+        Subtitle = channel.Series.Season.HasValue ? $"Sezon {channel.Series.Season}" : "Diğer bölümler",
+        Badge = channel.Series.Episode.HasValue ? $"BÖLÜM {channel.Series.Episode}" : "OYNAT",
+        LogoUrl = channel.LogoUrl,
+        Channel = channel,
+        SeriesTitle = channel.Series.Title,
+        Season = channel.Series.Season
+    };
+
+    public static MediaBrowserItem FromSeries(IGrouping<string, Channel> group)
+    {
+        var first = group.First();
+        return new MediaBrowserItem
+        {
+            Kind = MediaBrowserItemKind.Series,
+            Name = group.Key,
+            Subtitle = $"{group.Count():N0} bölüm",
+            Badge = "DİZİ  ›",
+            LogoUrl = group.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c.LogoUrl))?.LogoUrl ?? first.LogoUrl,
+            SeriesTitle = group.Key
+        };
+    }
+
+    public static MediaBrowserItem FromSeason(string seriesTitle, int? season, int episodeCount, string? logoUrl) => new()
+    {
+        Kind = MediaBrowserItemKind.Season,
+        Name = season.HasValue ? $"Sezon {season}" : "Diğer Bölümler",
+        Subtitle = $"{episodeCount:N0} bölüm",
+        Badge = "AÇ  ›",
+        LogoUrl = logoUrl,
+        SeriesTitle = seriesTitle,
+        Season = season
+    };
+}
 
 public sealed class PlaylistEntry
 {
