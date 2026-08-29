@@ -49,7 +49,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        AboutVersionText.Text = $"Sürüm {(Assembly.GetExecutingAssembly().GetName().Version ?? new Version(1, 0, 2)).ToString(3)}";
+        AboutVersionText.Text = $"Sürüm {(Assembly.GetExecutingAssembly().GetName().Version ?? new Version(1, 1, 0)).ToString(3)}";
         Timeline.AddHandler(PointerPressedEvent, Timeline_PointerPressed, RoutingStrategies.Tunnel, true);
         Timeline.AddHandler(PointerReleasedEvent, Timeline_PointerReleased, RoutingStrategies.Tunnel | RoutingStrategies.Bubble, true);
         Core.Initialize();

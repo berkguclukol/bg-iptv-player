@@ -25,6 +25,7 @@
       <Setter Property="MinWidth" Value="136"/><Setter Property="Padding" Value="18,12"/><Setter Property="CornerRadius" Value="11"/>
       <Setter Property="Background" Value="#171421"/><Setter Property="BorderBrush" Value="#2D273D"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Foreground" Value="#938BA4"/>
       <Setter Property="FontSize" Value="12"/><Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="VerticalContentAlignment" Value="Center"/>
     </Style>
     <Style Selector="Button.sectionButton:pointerover"><Setter Property="Background" Value="#252034"/><Setter Property="BorderBrush" Value="#514668"/></Style>
     <Style Selector="Button.sectionButton.active"><Setter Property="Background" Value="#302655"/><Setter Property="BorderBrush" Value="#826AF8"/><Setter Property="Foreground" Value="#C9BDFF"/></Style>
@@ -69,9 +70,24 @@
           <TextBox Grid.Column="1" x:Name="SearchBox" Watermark="Kanal veya içerik ara..." TextChanged="SearchBox_TextChanged" VerticalAlignment="Center"/>
         </Grid>
         <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center" Margin="0,14,0,0">
-          <Button x:Name="LiveSectionButton" Classes="sectionButton active" Content="▣  CANLI TV" Click="LiveSection_Click"/>
-          <Button x:Name="MovieSectionButton" Classes="sectionButton" Content="▤  FİLMLER" Click="MovieSection_Click"/>
-          <Button x:Name="SeriesSectionButton" Classes="sectionButton" Content="▰  DİZİLER" Click="SeriesSection_Click"/>
+          <Button x:Name="LiveSectionButton" Classes="sectionButton active" Click="LiveSection_Click">
+            <Grid ColumnDefinitions="18,*,18">
+              <Path Data="M2,4 L16,4 L16,14 L2,14 Z M5,7 L8,7 L8,11 L5,11 Z" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.3" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center"/>
+              <TextBlock Grid.Column="1" Text="CANLI TV" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Grid>
+          </Button>
+          <Button x:Name="MovieSectionButton" Classes="sectionButton" Click="MovieSection_Click">
+            <Grid ColumnDefinitions="18,*,18">
+              <Path Data="M2,3 L16,3 L16,15 L2,15 Z M5,3 L5,15 M13,3 L13,15 M2,7 L5,7 M13,7 L16,7 M2,11 L5,11 M13,11 L16,11" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.2" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center"/>
+              <TextBlock Grid.Column="1" Text="FİLMLER" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Grid>
+          </Button>
+          <Button x:Name="SeriesSectionButton" Classes="sectionButton" Click="SeriesSection_Click">
+            <Grid ColumnDefinitions="18,*,18">
+              <Path Data="M4,2 L16,2 L16,12 L4,12 Z M2,6 L2,16 L14,16" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.5" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center"/>
+              <TextBlock Grid.Column="1" Text="DİZİLER" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Grid>
+          </Button>
         </StackPanel>
       </Grid>
 
@@ -164,7 +180,7 @@
             <Image Source="avares://BG-IPTV-Player/Assets/app-icon.png" Width="82" Height="82" HorizontalAlignment="Left"/>
             <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="18,0,0,0">
               <TextBlock Text="BG IPTV Player" FontSize="31" FontWeight="Bold"/>
-              <Border Background="#302752" CornerRadius="7" Padding="9,4" HorizontalAlignment="Left" Margin="0,9,0,0"><TextBlock x:Name="AboutVersionText" Text="Sürüm 1.0.2" Foreground="#BBAEFF" FontSize="11" FontWeight="SemiBold"/></Border>
+              <Border Background="#302752" CornerRadius="7" Padding="9,4" HorizontalAlignment="Left" Margin="0,9,0,0"><TextBlock x:Name="AboutVersionText" Text="Sürüm 1.1.0" Foreground="#BBAEFF" FontSize="11" FontWeight="SemiBold"/></Border>
             </StackPanel>
           </Grid>
           <TextBlock Grid.Row="1" Text="M3U ve IPTV listelerini hızlı, düzenli ve uygulama içinde oynatmak için geliştirilmiş modern Windows masaüstü uygulaması." TextWrapping="Wrap" Foreground="#AAB2C3" FontSize="14" LineHeight="22" Margin="0,25,0,0"/>
