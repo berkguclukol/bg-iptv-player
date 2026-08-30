@@ -6,7 +6,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
     <AssemblyName>BG-IPTV-Player</AssemblyName>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <Authors>BG IPTV Player</Authors>
     <Product>BG IPTV Player</Product>
     <Description>Hızlı ve yerel Windows M3U/IPTV oynatıcısı</Description>
@@ -14,6 +14,7 @@
 
   <ItemGroup>
     <AvaloniaResource Include="Assets\app-icon.png" />
+    <AvaloniaResource Include="Assets\cinema-background.png" />
   </ItemGroup>
 
   <ItemGroup>

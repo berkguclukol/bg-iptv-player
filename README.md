@@ -11,9 +11,13 @@
 ## Özellikler
 
 - M3U ve M3U8 listelerini URL veya dosyadan ekleme
+- Sunucu, kullanıcı adı ve şifreyle doğrudan Xtream hesap desteği
+- XMLTV tabanlı EPG: kanal listesinde şimdi/sırada ve günlük yayın akışı
 - URL listelerini yerel önbellekte saklama ve isteğe bağlı yenileme
 - Birden fazla oynatma listesi ve aktif liste seçimi
 - Canlı TV, film ve dizi ayrımı
+- Favoriler, son izlenenler ve izlemeye devam et
+- Dizileri dizi, sezon ve bölüm halinde otomatik gruplama
 - Grup ve kanal arama
 - Uygulama içinde LibVLC tabanlı video oynatma
 - Film ve videolarda ileri–geri sarma
@@ -31,7 +35,7 @@ Windows 10/11 x64 desteklenir. Paket kendi .NET çalışma ortamını ve video m
 
 ## Playlist ekleme
 
-**Ayarlar → Oynatma Listeleri** bölümüne girin. Playlist URL'sini yapıştırıp ekleyebilir veya **Dosyadan ekle** seçeneğini kullanabilirsiniz. URL listesinin güncel kopyasını almak için yanındaki **Yenile** düğmesine basın.
+**Ayarlar → Oynatma Listeleri** bölümüne girin. M3U adresini yapıştırabilir, yerel dosya seçebilir veya Xtream sunucu/kullanıcı/şifre bilgilerini girebilirsiniz. Xtream hesabı eklendiğinde kanal listesi ve XMLTV EPG adresi otomatik hazırlanır. Listenin ve EPG'nin güncel kopyasını almak için yanındaki **Yenile** düğmesine basın.
 
 ## Kaynaktan çalıştırma
 

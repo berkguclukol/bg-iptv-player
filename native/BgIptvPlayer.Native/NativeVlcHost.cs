@@ -22,6 +22,7 @@ public sealed class NativeVlcHost : NativeControlHost
     private const uint WsVisible = 0x10000000;
     private const uint WsClipSiblings = 0x04000000;
     private const uint WsClipChildren = 0x02000000;
+    private const uint SsBlackRect = 0x00000004;
 
     private IntPtr _videoHandle;
     private IntPtr _originalWindowProc;
@@ -63,7 +64,7 @@ public sealed class NativeVlcHost : NativeControlHost
             0,
             "STATIC",
             string.Empty,
-            WsChild | WsVisible | WsClipSiblings | WsClipChildren,
+            WsChild | WsVisible | WsClipSiblings | WsClipChildren | SsBlackRect,
             0, 0, 1, 1,
             parent.Handle,
             IntPtr.Zero,
