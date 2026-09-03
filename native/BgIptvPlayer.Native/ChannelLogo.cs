@@ -31,8 +31,8 @@ public sealed class ChannelLogo : Grid
         Children.Add(new Border
         {
             CornerRadius = new CornerRadius(10),
-            Background = new SolidColorBrush(Color.Parse("#332C70")),
-            BorderBrush = new SolidColorBrush(Color.Parse("#5145A8")),
+            Background = new SolidColorBrush(Color.Parse("#342A2D")),
+            BorderBrush = new SolidColorBrush(Color.Parse("#574548")),
             BorderThickness = new Thickness(1)
         });
 
@@ -42,7 +42,7 @@ public sealed class ChannelLogo : Grid
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
             FontWeight = FontWeight.Bold,
             FontSize = 12,
-            Foreground = new SolidColorBrush(Color.Parse("#D9D5FF"))
+            Foreground = new SolidColorBrush(Color.Parse("#FF8A6B"))
         };
         Children.Add(_initials);
 
