@@ -36,6 +36,7 @@ public partial class MainWindow : Window
     private const string DefaultPlaylistUrl = "https://raw.githubusercontent.com/Free-TV/IPTV/refs/heads/master/playlists/playlist_turkey.m3u8";
     private static readonly HttpClient PlaylistClient = CreatePlaylistClient();
     private static readonly HttpClient UpdateClient = CreateUpdateClient();
+    private static readonly HttpClient UpdateDownloadClient = CreateUpdateDownloadClient();
     private readonly LibVLC _libVlc;
     private readonly MediaPlayer _mediaPlayer;
     private readonly DispatcherTimer _fullscreenControlsTimer;
@@ -67,6 +68,10 @@ public partial class MainWindow : Window
     private long? _pendingResumePosition;
     private double _lastAudibleVolume = 80;
     private string? _availableUpdateUrl;
+    private string? _updateSetupUrl;
+    private string? _updateVersionTag;
+    private long _updateSetupSize;
+    private bool _updateInProgress;
     private WindowState _previousWindowState = WindowState.Normal;
     private Window? _fullscreenControlsOverlay;
     private Border? _fullscreenControlsOverlaySurface;
@@ -104,7 +109,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         UpdateHomeDashboard();
-        var version = (Assembly.GetExecutingAssembly().GetName().Version ?? new Version(1, 3, 1)).ToString(3);
+        var version = (Assembly.GetExecutingAssembly().GetName().Version ?? new Version(1, 3, 2)).ToString(3);
         AboutVersionText.Text = $"Sürüm {version}";
         HomeVersionText.Text = $"BG IPTV Player · Sürüm {version}";
         Timeline.AddHandler(PointerPressedEvent, Timeline_PointerPressed, RoutingStrategies.Tunnel, true);
@@ -197,6 +202,14 @@ public partial class MainWindow : Window
         return client;
     }
 
+    // Kurulum dosyası büyük olduğu için sürüm kontrolünden ayrı, uzun zaman aşımlı istemci.
+    private static HttpClient CreateUpdateDownloadClient()
+    {
+        var client = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("BG-IPTV-Player/1.0");
+        return client;
+    }
+
     private static HttpClient CreatePlaylistClient()
     {
         var handler = new HttpClientHandler { AutomaticDecompression = DecompressionMethods.All };
@@ -221,7 +234,14 @@ public partial class MainWindow : Window
             if (latest <= current) return;
 
             _availableUpdateUrl = url;
+            _updateVersionTag = tag;
+            ReadUpdateSetupAsset(json.RootElement);
+
             UpdateTitle.Text = $"BG IPTV Player {tag} hazır";
+            UpdateStatusText.Text = _updateSetupUrl is null
+                ? "İndirmek için sürüm sayfasını açın."
+                : "İndirilip kurulur, ardından uygulama yeniden başlar.";
+            UpdateNowButton.IsVisible = _updateSetupUrl is not null;
             UpdateBanner.IsVisible = true;
         }
         catch
@@ -230,10 +250,90 @@ public partial class MainWindow : Window
         }
     }
 
+    // Yayındaki kurulum dosyasını bulur; yalnızca projenin kendi GitHub adresini kabul eder.
+    private void ReadUpdateSetupAsset(JsonElement release)
+    {
+        _updateSetupUrl = null;
+        _updateSetupSize = 0;
+        if (!release.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array) return;
+
+        foreach (var asset in assets.EnumerateArray())
+        {
+            var name = ReadJsonString(asset, "name");
+            if (name is null || !name.EndsWith("-Setup-x64.exe", StringComparison.OrdinalIgnoreCase)) continue;
+
+            var downloadUrl = ReadJsonString(asset, "browser_download_url");
+            if (!IsTrustedUpdateUrl(downloadUrl)) continue;
+
+            _updateSetupUrl = downloadUrl;
+            _updateSetupSize = asset.TryGetProperty("size", out var size) && size.TryGetInt64(out var bytes) ? bytes : 0;
+            return;
+        }
+    }
+
+    private static bool IsTrustedUpdateUrl(string? url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+        uri.Scheme == Uri.UriSchemeHttps &&
+        uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase) &&
+        uri.AbsolutePath.StartsWith("/berkguclukol/bg-iptv-player/releases/download/", StringComparison.OrdinalIgnoreCase);
+
     private void OpenUpdate_Click(object? sender, RoutedEventArgs e)
     {
         if (string.IsNullOrWhiteSpace(_availableUpdateUrl)) return;
         OpenExternalUrl(_availableUpdateUrl);
+    }
+
+    // Kurulum dosyasını indirir, sessiz kurulumu başlatır ve uygulamadan çıkar.
+    // Kurulum bittiğinde installer uygulamayı yeniden açar.
+    private async void UpdateNow_Click(object? sender, RoutedEventArgs e)
+    {
+        if (_updateInProgress || string.IsNullOrWhiteSpace(_updateSetupUrl)) return;
+        _updateInProgress = true;
+        UpdateNowButton.IsEnabled = false;
+
+        try
+        {
+            var directory = Path.Combine(Path.GetTempPath(), "BgIptvPlayerUpdate");
+            Directory.CreateDirectory(directory);
+            var setupPath = Path.Combine(directory, $"BG-IPTV-Player-{_updateVersionTag ?? "latest"}-Setup-x64.exe");
+
+            UpdateStatusText.Text = "İndiriliyor...";
+            using (var response = await UpdateDownloadClient.GetAsync(_updateSetupUrl, HttpCompletionOption.ResponseHeadersRead))
+            {
+                response.EnsureSuccessStatusCode();
+                var total = response.Content.Headers.ContentLength ?? _updateSetupSize;
+                await using var input = await response.Content.ReadAsStreamAsync();
+                await using var output = new FileStream(setupPath, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 1024, true);
+                var buffer = new byte[1024 * 1024];
+                long received = 0;
+                int read;
+                while ((read = await input.ReadAsync(buffer)) > 0)
+                {
+                    await output.WriteAsync(buffer.AsMemory(0, read));
+                    received += read;
+                    UpdateStatusText.Text = total > 0
+                        ? $"İndiriliyor %{received * 100 / total}"
+                        : $"İndiriliyor {received / 1024d / 1024d:0.0} MB";
+                }
+            }
+
+            if (_updateSetupSize > 0 && new FileInfo(setupPath).Length != _updateSetupSize)
+                throw new InvalidDataException("İndirilen dosya eksik.");
+
+            UpdateStatusText.Text = "Kurulum başlatılıyor...";
+            Process.Start(new ProcessStartInfo(setupPath)
+            {
+                UseShellExecute = true,
+                Arguments = "/SILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS"
+            });
+            Close();
+        }
+        catch (Exception ex)
+        {
+            UpdateStatusText.Text = $"Güncelleme yapılamadı: {ex.Message}";
+            UpdateNowButton.IsEnabled = true;
+            _updateInProgress = false;
+        }
     }
 
     private void DismissUpdate_Click(object? sender, RoutedEventArgs e) => UpdateBanner.IsVisible = false;

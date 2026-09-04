@@ -1,5 +1,7 @@
 #define MyAppName "BG IPTV Player"
-#define MyAppVersion "1.3.1"
+#ifndef MyAppVersion
+  #define MyAppVersion "1.3.1"
+#endif
 #define MyAppPublisher "Berk Güçlükol"
 #define MyAppURL "https://github.com/berkguclukol/bg-iptv-player"
 #define MyAppExeName "BG-IPTV-Player.exe"
@@ -42,11 +44,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "..\artifacts\BG-IPTV-Player-v1.3.1-publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\artifacts\BG-IPTV-Player-v{#MyAppVersion}-publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall
