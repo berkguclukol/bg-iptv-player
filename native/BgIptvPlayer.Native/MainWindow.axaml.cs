@@ -103,15 +103,8 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        // Pencere kendi başlık çubuğunu çizdiği için ekranı kapladığında
-        // Windows'un taşan kenar payını iç boşluk olarak telafi ediyoruz.
-        PropertyChanged += (_, e) =>
-        {
-            if (e.Property == WindowStateProperty)
-                Padding = WindowState == WindowState.Maximized ? OffScreenMargin : new Thickness(0);
-        };
         UpdateHomeDashboard();
-        var version = (Assembly.GetExecutingAssembly().GetName().Version ?? new Version(1, 3, 0)).ToString(3);
+        var version = (Assembly.GetExecutingAssembly().GetName().Version ?? new Version(1, 3, 1)).ToString(3);
         AboutVersionText.Text = $"Sürüm {version}";
         HomeVersionText.Text = $"BG IPTV Player · Sürüm {version}";
         Timeline.AddHandler(PointerPressedEvent, Timeline_PointerPressed, RoutingStrategies.Tunnel, true);
@@ -1064,26 +1057,6 @@ public partial class MainWindow : Window
     {
         PlaybackStatus.Text = message;
         if (LoadingOverlay.IsVisible) LoadingStatusText.Text = message;
-    }
-
-    private void TitleBar_PointerPressed(object? sender, PointerPressedEventArgs e)
-    {
-        if (_isPlayerFullscreen) return;
-        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) BeginMoveDrag(e);
-    }
-
-    private void TitleBar_DoubleTapped(object? sender, TappedEventArgs e) => ToggleMaximize();
-
-    private void MinimizeWindow_Click(object? sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
-
-    private void MaximizeWindow_Click(object? sender, RoutedEventArgs e) => ToggleMaximize();
-
-    private void CloseWindow_Click(object? sender, RoutedEventArgs e) => Close();
-
-    private void ToggleMaximize()
-    {
-        if (_isPlayerFullscreen) return;
-        WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
     }
 
     private void SetContentSection(ContentKind kind)
@@ -2462,7 +2435,6 @@ public partial class MainWindow : Window
             _epgPanelWasVisibleBeforeFullscreen = EpgPanel.IsVisible;
             SetEpgPanelVisibility(false);
             _previousWindowState = WindowState;
-            TitleBar.IsVisible = false;
             Sidebar.IsVisible = false;
             HeaderPanel.IsVisible = false;
             ChannelPanel.IsVisible = false;
@@ -2502,7 +2474,6 @@ public partial class MainWindow : Window
             if (_epgPanelWasVisibleBeforeFullscreen && _playingChannel is { Kind: ContentKind.Live } channel)
                 UpdateEpgPanel(channel, true);
             _fullscreenControlsTimer.Stop();
-            TitleBar.IsVisible = true;
             Sidebar.IsVisible = true;
             HeaderPanel.IsVisible = true;
             ChannelPanel.IsVisible = true;
