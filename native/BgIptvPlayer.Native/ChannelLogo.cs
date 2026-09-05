@@ -28,28 +28,20 @@ public sealed class ChannelLogo : Grid
     public ChannelLogo()
     {
         ClipToBounds = true;
-        Children.Add(new Border
-        {
-            CornerRadius = new CornerRadius(10),
-            Background = new SolidColorBrush(Color.Parse("#342A2D")),
-            BorderBrush = new SolidColorBrush(Color.Parse("#574548")),
-            BorderThickness = new Thickness(1)
-        });
 
         _initials = new TextBlock
         {
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
             FontWeight = FontWeight.Bold,
-            FontSize = 12,
-            Foreground = new SolidColorBrush(Color.Parse("#FF8A6B"))
+            FontSize = 13,
+            Foreground = new SolidColorBrush(Color.Parse("#FF8A5C"))
         };
         Children.Add(_initials);
 
         _image = new Image
         {
             Stretch = Stretch.Uniform,
-            Margin = new Thickness(4),
             IsVisible = false
         };
         Children.Add(_image);
@@ -80,6 +72,7 @@ public sealed class ChannelLogo : Grid
     {
         _image.IsVisible = false;
         _image.Source = null;
+        _initials.IsVisible = true;
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)) return;
 
         try
@@ -91,6 +84,7 @@ public sealed class ChannelLogo : Grid
                 if (version != _loadVersion) return;
                 _image.Source = bitmap;
                 _image.IsVisible = true;
+                _initials.IsVisible = false;
             });
         }
         catch

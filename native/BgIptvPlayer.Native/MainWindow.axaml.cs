@@ -104,14 +104,15 @@ public partial class MainWindow : Window
     private bool _syncingFullscreenVolume;
     private int _loadingDepth;
     private bool _isGlobalSearch;
+    private string _settingsSection = "playlists";
 
     public MainWindow()
     {
+        Localization.Initialize();
         InitializeComponent();
         UpdateHomeDashboard();
-        var version = (Assembly.GetExecutingAssembly().GetName().Version ?? new Version(1, 3, 2)).ToString(3);
-        AboutVersionText.Text = $"Sürüm {version}";
-        HomeVersionText.Text = $"BG IPTV Player · Sürüm {version}";
+        Localization.LanguageChanged += ApplyLanguage;
+        ApplyLanguage();
         Timeline.AddHandler(PointerPressedEvent, Timeline_PointerPressed, RoutingStrategies.Tunnel, true);
         Timeline.AddHandler(PointerReleasedEvent, Timeline_PointerReleased, RoutingStrategies.Tunnel | RoutingStrategies.Bubble, true);
         Core.Initialize();
@@ -136,13 +137,13 @@ public partial class MainWindow : Window
         _playbackProgressTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         _playbackProgressTimer.Tick += (_, _) => SaveCurrentPlaybackProgress();
         _playbackProgressTimer.Start();
-        _mediaPlayer.Opening += (_, _) => SetStatus("Yayına bağlanılıyor...");
-        _mediaPlayer.Buffering += (_, e) => SetStatus($"Yükleniyor %{e.Cache:0}");
+        _mediaPlayer.Opening += (_, _) => SetStatus(L("Yayına bağlanılıyor..."));
+        _mediaPlayer.Buffering += (_, e) => SetStatus($"{L("Yükleniyor")} %{e.Cache:0}");
         _mediaPlayer.Playing += (_, _) => Dispatcher.UIThread.Post(() =>
         {
             PlaybackStatus.Text = _playingContent == ContentKind.Live && _playingChannel is { } liveChannel
                 ? GetNowPlayingStatus(liveChannel)
-                : "Oynatılıyor";
+                : L("Oynatılıyor");
             UpdatePlayerOverlayText();
             UpdatePlayPauseIcons(true);
             if (!_historyRecordedForCurrentPlayback && _playingChannel is { } playingChannel)
@@ -154,7 +155,7 @@ public partial class MainWindow : Window
         });
         _mediaPlayer.Paused += (_, _) => Dispatcher.UIThread.Post(() => UpdatePlayPauseIcons(false));
         _mediaPlayer.Stopped += (_, _) => Dispatcher.UIThread.Post(() => UpdatePlayPauseIcons(false));
-        _mediaPlayer.EncounteredError += (_, _) => SetStatus("Yayın açılamadı; kaynak çevrimdışı olabilir.");
+        _mediaPlayer.EncounteredError += (_, _) => SetStatus(L("Yayın açılamadı; kaynak çevrimdışı olabilir."));
         _mediaPlayer.TimeChanged += (_, e) => UpdateTimeline(e.Time, _mediaPlayer.Length);
         _mediaPlayer.LengthChanged += (_, e) =>
         {
@@ -219,35 +220,96 @@ public partial class MainWindow : Window
         return client;
     }
 
-    private async void CheckForUpdatesAsync()
+    private enum UpdateCheckResult
+    {
+        Failed,
+        UpToDate,
+        Available
+    }
+
+    // Sürüm bilgisini okur; hem açılıştaki otomatik denetim hem de ayarlardaki düğme bunu kullanır.
+    private async Task<UpdateCheckResult> FetchLatestReleaseAsync()
     {
         try
         {
             using var response = await UpdateClient.GetAsync("https://api.github.com/repos/berkguclukol/bg-iptv-player/releases/latest");
-            if (!response.IsSuccessStatusCode) return;
+            if (!response.IsSuccessStatusCode) return UpdateCheckResult.Failed;
             using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             var tag = json.RootElement.GetProperty("tag_name").GetString();
             var url = json.RootElement.GetProperty("html_url").GetString();
-            if (string.IsNullOrWhiteSpace(tag) || string.IsNullOrWhiteSpace(url)) return;
-            if (!Version.TryParse(tag.TrimStart('v', 'V').Split('-', 2)[0], out var latest)) return;
+            if (string.IsNullOrWhiteSpace(tag) || string.IsNullOrWhiteSpace(url)) return UpdateCheckResult.Failed;
+            if (!Version.TryParse(tag.TrimStart('v', 'V').Split('-', 2)[0], out var latest)) return UpdateCheckResult.Failed;
             var current = Assembly.GetExecutingAssembly().GetName().Version ?? new Version(1, 0, 0);
-            if (latest <= current) return;
+            if (latest <= current) return UpdateCheckResult.UpToDate;
 
             _availableUpdateUrl = url;
             _updateVersionTag = tag;
             ReadUpdateSetupAsset(json.RootElement);
-
-            UpdateTitle.Text = $"BG IPTV Player {tag} hazır";
-            UpdateStatusText.Text = _updateSetupUrl is null
-                ? "İndirmek için sürüm sayfasını açın."
-                : "İndirilip kurulur, ardından uygulama yeniden başlar.";
-            UpdateNowButton.IsVisible = _updateSetupUrl is not null;
-            UpdateBanner.IsVisible = true;
+            return UpdateCheckResult.Available;
         }
         catch
         {
             // Güncelleme kontrolü uygulamanın açılışını ve oynatmayı etkilemez.
+            return UpdateCheckResult.Failed;
         }
+    }
+
+    private async void CheckForUpdatesAsync()
+    {
+        if (await FetchLatestReleaseAsync() != UpdateCheckResult.Available) return;
+        ShowUpdateBanner();
+    }
+
+    private void ShowUpdateBanner()
+    {
+        UpdateTitle.Text = $"BG IPTV Player {_updateVersionTag} {L("hazır")}";
+        UpdateStatusText.Text = _updateSetupUrl is null
+            ? L("İndirmek için sürüm sayfasını açın.")
+            : L("İndirilip kurulur, ardından uygulama yeniden başlar.");
+        UpdateNowButton.IsVisible = _updateSetupUrl is not null;
+        UpdateBanner.IsVisible = true;
+        RefreshUpdateSection();
+    }
+
+    // Ayarlar sayfasındaki güncelleme bölümünü mevcut duruma göre yazar.
+    private void RefreshUpdateSection()
+    {
+        if (_updateInProgress) return;
+        SettingsVersionText.Text = $"BG IPTV Player {AppVersion}";
+        if (_availableUpdateUrl is null)
+        {
+            SettingsUpdateActions.IsVisible = false;
+            SettingsUpdateStatus.Text = L("Uygulama her açılışta güncellemeleri kendiliğinden denetler.");
+            return;
+        }
+
+        SettingsUpdateStatus.Text = $"BG IPTV Player {_updateVersionTag} {L("hazır")}";
+        SettingsUpdateNowButton.IsVisible = _updateSetupUrl is not null;
+        SettingsUpdateActions.IsVisible = true;
+    }
+
+    private async void CheckUpdatesNow_Click(object? sender, RoutedEventArgs e)
+    {
+        if (_updateInProgress) return;
+        CheckUpdatesButton.IsEnabled = false;
+        SettingsUpdateActions.IsVisible = false;
+        SettingsUpdateStatus.Text = L("Denetleniyor...");
+
+        var result = await FetchLatestReleaseAsync();
+        if (result == UpdateCheckResult.Available) ShowUpdateBanner();
+        else
+            SettingsUpdateStatus.Text = result == UpdateCheckResult.UpToDate
+                ? L("Uygulamanın en güncel sürümünü kullanıyorsunuz.")
+                : L("Güncelleme denetlenemedi. İnternet bağlantınızı kontrol edin.");
+
+        CheckUpdatesButton.IsEnabled = true;
+    }
+
+    // Güncelleme durumu hem bildirim şeridinde hem ayarlar sayfasında görünür.
+    private void SetUpdateStatus(string text)
+    {
+        UpdateStatusText.Text = text;
+        SettingsUpdateStatus.Text = text;
     }
 
     // Yayındaki kurulum dosyasını bulur; yalnızca projenin kendi GitHub adresini kabul eder.
@@ -290,6 +352,7 @@ public partial class MainWindow : Window
         if (_updateInProgress || string.IsNullOrWhiteSpace(_updateSetupUrl)) return;
         _updateInProgress = true;
         UpdateNowButton.IsEnabled = false;
+        SettingsUpdateNowButton.IsEnabled = false;
 
         try
         {
@@ -297,7 +360,7 @@ public partial class MainWindow : Window
             Directory.CreateDirectory(directory);
             var setupPath = Path.Combine(directory, $"BG-IPTV-Player-{_updateVersionTag ?? "latest"}-Setup-x64.exe");
 
-            UpdateStatusText.Text = "İndiriliyor...";
+            SetUpdateStatus(L("İndiriliyor..."));
             using (var response = await UpdateDownloadClient.GetAsync(_updateSetupUrl, HttpCompletionOption.ResponseHeadersRead))
             {
                 response.EnsureSuccessStatusCode();
@@ -311,16 +374,16 @@ public partial class MainWindow : Window
                 {
                     await output.WriteAsync(buffer.AsMemory(0, read));
                     received += read;
-                    UpdateStatusText.Text = total > 0
-                        ? $"İndiriliyor %{received * 100 / total}"
-                        : $"İndiriliyor {received / 1024d / 1024d:0.0} MB";
+                    SetUpdateStatus(total > 0
+                        ? $"{L("İndiriliyor")} %{received * 100 / total}"
+                        : $"{L("İndiriliyor")} {received / 1024d / 1024d:0.0} MB");
                 }
             }
 
             if (_updateSetupSize > 0 && new FileInfo(setupPath).Length != _updateSetupSize)
-                throw new InvalidDataException("İndirilen dosya eksik.");
+                throw new InvalidDataException(L("İndirilen dosya eksik."));
 
-            UpdateStatusText.Text = "Kurulum başlatılıyor...";
+            SetUpdateStatus(L("Kurulum başlatılıyor..."));
             Process.Start(new ProcessStartInfo(setupPath)
             {
                 UseShellExecute = true,
@@ -330,9 +393,10 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            UpdateStatusText.Text = $"Güncelleme yapılamadı: {ex.Message}";
-            UpdateNowButton.IsEnabled = true;
             _updateInProgress = false;
+            SetUpdateStatus($"{L("Güncelleme yapılamadı")}: {ex.Message}");
+            UpdateNowButton.IsEnabled = true;
+            SettingsUpdateNowButton.IsEnabled = true;
         }
     }
 
@@ -349,7 +413,7 @@ public partial class MainWindow : Window
     {
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
-            Title = "M3U oynatma listesi seç", AllowMultiple = false,
+            Title = L("M3U oynatma listesi seç"), AllowMultiple = false,
             FileTypeFilter = [new FilePickerFileType("M3U oynatma listesi") { Patterns = ["*.m3u", "*.m3u8"] }]
         });
         var path = files.FirstOrDefault()?.TryGetLocalPath();
@@ -365,7 +429,7 @@ public partial class MainWindow : Window
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
         {
             PlaylistUrlBox.Text = "";
-            PlaylistUrlBox.Watermark = "Geçerli bir http veya https adresi girin";
+            PlaylistUrlBox.Watermark = L("Geçerli bir http veya https adresi girin");
             return;
         }
 
@@ -386,7 +450,7 @@ public partial class MainWindow : Window
         if (!TryBuildXtreamUrls(server, username, password, out var playlistUrl, out var epgUrl, out var displayServer, out var baseUrl))
         {
             XtreamServerBox.Text = "";
-            XtreamServerBox.Watermark = "Sunucu, kullanıcı adı ve şifreyi kontrol edin";
+            XtreamServerBox.Watermark = L("Sunucu, kullanıcı adı ve şifreyi kontrol edin");
             return;
         }
 
@@ -434,7 +498,7 @@ public partial class MainWindow : Window
 
     private async Task LoadPlaylistEntryAsync(PlaylistEntry entry, bool forceRefresh = false)
     {
-        BeginLoading($"{entry.Name} hazırlanıyor...");
+        BeginLoading($"{entry.Name} {L("hazırlanıyor...")}");
         try
         {
             var loadedFromXtreamApi = false;
@@ -447,7 +511,7 @@ public partial class MainWindow : Window
                 }
                 catch
                 {
-                    SetLoadingStatus("Xtream API yanıt vermedi · M3U deneniyor...");
+                    SetLoadingStatus(L("Xtream API yanıt vermedi · M3U deneniyor..."));
                 }
             }
 
@@ -460,17 +524,17 @@ public partial class MainWindow : Window
             {
                 try
                 {
-                    SetLoadingStatus("EPG bilgileri yükleniyor...");
+                    SetLoadingStatus(L("EPG bilgileri yükleniyor..."));
                     var epgPath = await ResolveEpgPathAsync(entry, forceRefresh);
                     _epg = await Task.Run(() => ParseXmlTv(epgPath));
                     RefreshGroups(preserveSelection: true, resetSeriesBrowser: false);
                     if (_playingChannel is { } playingChannel) UpdateEpgPanel(playingChannel, EpgPanel.IsVisible);
-                    SetLoadingStatus($"{_channels.Count:N0} içerik · EPG hazır");
+                    SetLoadingStatus($"{_channels.Count:N0} {L("içerik")} · {L("EPG hazır")}");
                 }
                 catch (Exception ex)
                 {
                     _epg = new EpgSnapshot();
-                    SetLoadingStatus($"Liste hazır · EPG alınamadı: {ex.Message}");
+                    SetLoadingStatus($"{L("Liste hazır")} · {L("EPG alınamadı")}: {ex.Message}");
                 }
             }
             else
@@ -480,8 +544,8 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            PageTitle.Text = "Liste yüklenemedi";
-            SetLoadingStatus($"Liste açılamadı: {ex.Message}");
+            PageTitle.Text = L("Liste yüklenemedi");
+            SetLoadingStatus($"{L("Liste açılamadı")}: {ex.Message}");
         }
         finally
         {
@@ -492,23 +556,23 @@ public partial class MainWindow : Window
     private async Task LoadXtreamApiAsync(PlaylistEntry entry, bool forceRefresh)
     {
         if (!TryGetXtreamCredentials(entry, out var credentials))
-            throw new InvalidDataException("Xtream hesap bilgileri okunamadı.");
+            throw new InvalidDataException(L("Xtream hesap bilgileri okunamadı."));
 
-        PageTitle.Text = "Xtream hesabı doğrulanıyor...";
-        SetLoadingStatus($"{entry.Name} · Xtream hesabı doğrulanıyor...");
+        PageTitle.Text = L("Xtream hesabı doğrulanıyor...");
+        SetLoadingStatus($"{entry.Name} · {L("Xtream hesabı doğrulanıyor...")}");
         var apiRoot = $"{credentials.Server}/player_api.php?username={Uri.EscapeDataString(credentials.Username)}&password={Uri.EscapeDataString(credentials.Password)}";
         using (var accountJson = JsonDocument.Parse(await PlaylistClient.GetStringAsync(apiRoot)))
         {
             if (!accountJson.RootElement.TryGetProperty("user_info", out var userInfo) ||
                 ReadJsonString(userInfo, "auth") != "1")
-                throw new UnauthorizedAccessException("Xtream hesabı doğrulanamadı.");
+                throw new UnauthorizedAccessException(L("Xtream hesabı doğrulanamadı."));
 
             var status = ReadJsonString(userInfo, "status");
             if (status is not null && status.Equals("Active", StringComparison.OrdinalIgnoreCase) == false)
                 throw new UnauthorizedAccessException($"Xtream hesap durumu: {status}");
         }
 
-        SetLoadingStatus("Xtream kategorileri ve içerikleri alınıyor...");
+        SetLoadingStatus(L("Xtream kategorileri ve içerikleri alınıyor..."));
         var liveCategoriesTask = PlaylistClient.GetStringAsync(apiRoot + "&action=get_live_categories");
         var liveStreamsTask = PlaylistClient.GetStringAsync(apiRoot + "&action=get_live_streams");
         var vodCategoriesTask = PlaylistClient.GetStringAsync(apiRoot + "&action=get_vod_categories");
@@ -540,13 +604,13 @@ public partial class MainWindow : Window
         var liveCount = _channels.Count(channel => channel.Kind == ContentKind.Live);
         var movieCount = _channels.Count(channel => channel.Kind == ContentKind.Movie);
         var seriesCount = _channels.Count(channel => channel.Kind == ContentKind.Series);
-        SetLoadingStatus($"Xtream API · {liveCount:N0} canlı · {movieCount:N0} film · {seriesCount:N0} dizi");
+        SetLoadingStatus($"Xtream API · {liveCount:N0} {L("canlı")} · {movieCount:N0} {L("film")} · {seriesCount:N0} {L("dizi")}");
     }
 
     private static Dictionary<string, string> ParseXtreamCategories(string json)
     {
         using var document = JsonDocument.Parse(json);
-        if (document.RootElement.ValueKind != JsonValueKind.Array) throw new InvalidDataException("Kategori yanıtı geçersiz.");
+        if (document.RootElement.ValueKind != JsonValueKind.Array) throw new InvalidDataException(L("Kategori yanıtı geçersiz."));
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var element in document.RootElement.EnumerateArray())
         {
@@ -564,7 +628,7 @@ public partial class MainWindow : Window
         ContentKind kind)
     {
         using var document = JsonDocument.Parse(json);
-        if (document.RootElement.ValueKind != JsonValueKind.Array) throw new InvalidDataException("İçerik yanıtı geçersiz.");
+        if (document.RootElement.ValueKind != JsonValueKind.Array) throw new InvalidDataException(L("İçerik yanıtı geçersiz."));
         var result = new List<Channel>();
         foreach (var element in document.RootElement.EnumerateArray())
         {
@@ -661,7 +725,7 @@ public partial class MainWindow : Window
         using (var reader = XmlReader.Create(cachePath, new XmlReaderSettings { DtdProcessing = DtdProcessing.Ignore }))
         {
             reader.MoveToContent();
-            if (!reader.Name.Equals("tv", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Sunucu geçerli XMLTV verisi döndürmedi.");
+            if (!reader.Name.Equals("tv", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException(L("Sunucu geçerli XMLTV verisi döndürmedi."));
         }
         return cachePath;
     }
@@ -670,7 +734,7 @@ public partial class MainWindow : Window
     {
         if (!entry.IsRemote)
         {
-            if (!File.Exists(entry.Path)) throw new FileNotFoundException("Oynatma listesi dosyası bulunamadı.");
+            if (!File.Exists(entry.Path)) throw new FileNotFoundException(L("Oynatma listesi dosyası bulunamadı."));
             return entry.Path;
         }
 
@@ -695,14 +759,14 @@ public partial class MainWindow : Window
                 await output.WriteAsync(buffer.AsMemory(0, read));
                 received += read;
                 SetLoadingStatus(total > 0
-                    ? $"İndiriliyor %{received * 100 / total.Value}"
-                    : $"İndiriliyor {received / 1024d / 1024d:0.0} MB");
+                    ? $"{L("İndiriliyor")} %{received * 100 / total.Value}"
+                    : $"{L("İndiriliyor")} {received / 1024d / 1024d:0.0} MB");
             }
         }
         if (!IsM3uFile(tempPath))
         {
             File.Delete(tempPath);
-            throw new InvalidDataException("Sunucu geçerli bir M3U listesi döndürmedi.");
+            throw new InvalidDataException(L("Sunucu geçerli bir M3U listesi döndürmedi."));
         }
         File.Move(tempPath, cachePath, true);
         return cachePath;
@@ -726,7 +790,7 @@ public partial class MainWindow : Window
 
     private async Task LoadPlaylistAsync(string path, string? displayName = null)
     {
-        PageTitle.Text = "Liste yükleniyor...";
+        PageTitle.Text = L("Liste yükleniyor...");
         BeginLoading($"{displayName ?? Path.GetFileName(path)} okunuyor...");
         try
         {
@@ -735,9 +799,9 @@ public partial class MainWindow : Window
             var liveCount = _channels.Count(c => c.Kind == ContentKind.Live);
             var movieCount = _channels.Count(c => c.Kind == ContentKind.Movie);
             var seriesCount = _channels.Count(c => c.Kind == ContentKind.Series);
-            SetLoadingStatus($"{liveCount:N0} canlı · {movieCount:N0} film · {seriesCount:N0} dizi");
+            SetLoadingStatus($"{liveCount:N0} {L("canlı")} · {movieCount:N0} {L("film")} · {seriesCount:N0} {L("dizi")}");
         }
-        catch (Exception ex) { SetLoadingStatus($"Liste açılamadı: {ex.Message}"); }
+        catch (Exception ex) { SetLoadingStatus($"{L("Liste açılamadı")}: {ex.Message}"); }
         finally { EndLoading(); }
     }
 
@@ -773,7 +837,7 @@ public partial class MainWindow : Window
             if (line[i] == '"') quoted = !quoted;
             else if (line[i] == ',' && !quoted) return line[(i + 1)..].Trim();
         }
-        return "İsimsiz kanal";
+        return L("İsimsiz kanal");
     }
 
     private static string? ReadAttribute(string line, string name)
@@ -907,8 +971,8 @@ public partial class MainWindow : Window
         var schedule = FindEpgSchedule(channel);
         if (schedule?.Current is { } current)
         {
-            var next = schedule.Next is { } upcoming ? $"  •  Sırada: {upcoming.Title}" : "";
-            return $"Şimdi: {current.Title}{next}";
+            var next = schedule.Next is { } upcoming ? $"  •  {L("Sırada")}: {upcoming.Title}" : "";
+            return $"{L("Şimdi")}: {current.Title}{next}";
         }
         if (schedule?.Next is { } nextProgramme) return $"{nextProgramme.Start:HH:mm} · {nextProgramme.Title}";
         return channel.Group;
@@ -918,8 +982,8 @@ public partial class MainWindow : Window
     {
         var current = FindEpgSchedule(channel)?.Current;
         return current is null
-            ? "Canlı yayın oynatılıyor"
-            : $"Şimdi · {current.Title} · {current.Start:HH:mm}–{current.Stop:HH:mm}";
+            ? L("Canlı yayın oynatılıyor")
+            : $"{L("Şimdi")} · {current.Title} · {current.Start:HH:mm}–{current.Stop:HH:mm}";
     }
 
     private static ContentKind ClassifyContent(string url, string group, string name)
@@ -991,13 +1055,13 @@ public partial class MainWindow : Window
 
         var recentChannels = GetLibraryChannels(LibraryGroupKind.Recent, _selectedContent);
         if (recentChannels.Count > 0)
-            groups.Add(new ChannelGroup("◷ Son İzlenenler", recentChannels.Count, LibraryGroupKind.Recent));
+            groups.Add(new ChannelGroup(L("◷ Son İzlenenler"), recentChannels.Count, LibraryGroupKind.Recent));
 
         if (_selectedContent != ContentKind.Live)
         {
             var continueWatchingChannels = GetLibraryChannels(LibraryGroupKind.ContinueWatching, _selectedContent);
             if (continueWatchingChannels.Count > 0)
-                groups.Add(new ChannelGroup("▶ İzlemeye Devam Et", continueWatchingChannels.Count, LibraryGroupKind.ContinueWatching));
+                groups.Add(new ChannelGroup(L("▶ İzlemeye Devam Et"), continueWatchingChannels.Count, LibraryGroupKind.ContinueWatching));
         }
 
         groups.AddRange(regularGroups);
@@ -1042,16 +1106,15 @@ public partial class MainWindow : Window
     {
         HomePage.IsVisible = false;
         SettingsPage.IsVisible = false;
-        AboutPage.IsVisible = false;
         ContentArea.IsVisible = true;
         Sidebar.IsVisible = true;
         HeaderPanel.IsVisible = true;
         RootGrid.ColumnDefinitions = new ColumnDefinitions("350,*");
         LibrarySidebarTitle.Text = kind switch
         {
-            ContentKind.Movie => "FİLMLER",
-            ContentKind.Series => "DİZİLER",
-            _ => "CANLI TV"
+            ContentKind.Movie => L("FİLMLER"),
+            ContentKind.Series => L("DİZİLER"),
+            _ => L("CANLI TV")
         };
         SetContentSection(kind);
         if (_playingChannel is not null) Dispatcher.UIThread.Post(ShowPlayerOverlay);
@@ -1064,7 +1127,6 @@ public partial class MainWindow : Window
         if (_isPlayerFullscreen) SetPlayerFullscreen(false);
         StopPlaybackForNavigation();
         SettingsPage.IsVisible = false;
-        AboutPage.IsVisible = false;
         ContentArea.IsVisible = false;
         Sidebar.IsVisible = false;
         RootGrid.ColumnDefinitions = new ColumnDefinitions("0,*");
@@ -1088,7 +1150,6 @@ public partial class MainWindow : Window
         _isGlobalSearch = true;
         HomePage.IsVisible = false;
         SettingsPage.IsVisible = false;
-        AboutPage.IsVisible = false;
         ContentArea.IsVisible = true;
         Sidebar.IsVisible = true;
         HeaderPanel.IsVisible = true;
@@ -1115,13 +1176,13 @@ public partial class MainWindow : Window
             ? MediaBrowserItem.FromEpisode(channel, channel.Group)
             : MediaBrowserItem.FromChannel(channel, GetChannelSubtitle(channel))).ToList();
 
-        PageTitle.Text = query.Length == 0 ? "Arama" : $"\"{query}\" sonuçları";
-        BrowserTitle.Text = "TÜM İÇERİKLER";
+        PageTitle.Text = query.Length == 0 ? L("Arama") : $"\"{query}\"{L(" sonuçları")}";
+        BrowserTitle.Text = L("TÜM İÇERİKLER");
         SeriesBackButton.IsVisible = false;
         ClearHistoryButton.IsVisible = false;
         ChannelCount.Text = matches.Count > shown.Count
-            ? $"ilk {shown.Count:N0} / {matches.Count:N0} sonuç"
-            : $"{matches.Count:N0} sonuç";
+            ? $"{L("ilk")} {shown.Count:N0} / {matches.Count:N0} {L("sonuç")}"
+            : $"{matches.Count:N0} {L("sonuç")}";
     }
 
     private void UpdateHomeDashboard()
@@ -1137,6 +1198,13 @@ public partial class MainWindow : Window
             .Distinct(StringComparer.CurrentCultureIgnoreCase)
             .Count();
         HomeSeriesCount.Text = $"{seriesCount:N0} dizi";
+    }
+
+    private void SelectLibraryGroup(LibraryGroupKind kind)
+    {
+        if (GroupList.ItemsSource is not IEnumerable<ChannelGroup> groups) return;
+        var match = groups.FirstOrDefault(g => g.Kind == kind);
+        if (match is not null) GroupList.SelectedItem = match;
     }
 
     private void BeginLoading(string message)
@@ -1179,7 +1247,7 @@ public partial class MainWindow : Window
     {
         ContentKind.Movie => "Filmler",
         ContentKind.Series => "Diziler",
-        _ => "Canlı TV"
+        _ => L("Canlı TV")
     };
 
     private void ApplyFilter()
@@ -1209,7 +1277,7 @@ public partial class MainWindow : Window
                         (query.Length == 0 || c.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase)))
             .ToList();
         ChannelList.ItemsSource = channels.Select(channel => MediaBrowserItem.FromChannel(channel, GetChannelSubtitle(channel))).ToList();
-        BrowserTitle.Text = _selectedContent == ContentKind.Movie ? "FİLMLER" : "KANALLAR";
+        BrowserTitle.Text = _selectedContent == ContentKind.Movie ? L("FİLMLER") : L("KANALLAR");
         SeriesBackButton.IsVisible = false;
         ChannelCount.Text = _selectedContent == ContentKind.Movie ? $"{channels.Count:N0} film" : $"{channels.Count:N0} kanal";
     }
@@ -1229,7 +1297,7 @@ public partial class MainWindow : Window
             var subtitle = _selectedGroupKind switch
             {
                 LibraryGroupKind.Recent => $"Son izlendi · {FormatRelativeTime(state?.LastWatchedAt)}",
-                LibraryGroupKind.ContinueWatching => $"Kaldığın yer · {FormatTime(state?.PositionMs ?? 0)}",
+                LibraryGroupKind.ContinueWatching => $"{L("Kaldığın yer")} · {FormatTime(state?.PositionMs ?? 0)}",
                 _ => channel.Group
             };
 
@@ -1241,9 +1309,9 @@ public partial class MainWindow : Window
 
         BrowserTitle.Text = _selectedGroupKind switch
         {
-            LibraryGroupKind.Favorites => "FAVORİLER",
-            LibraryGroupKind.Recent => "SON İZLENENLER",
-            _ => "İZLEMEYE DEVAM ET"
+            LibraryGroupKind.Favorites => L("FAVORİLER"),
+            LibraryGroupKind.Recent => L("SON İZLENENLER"),
+            _ => L("İZLEMEYE DEVAM ET")
         };
         SeriesBackButton.IsVisible = false;
         ClearHistoryButton.IsVisible = channels.Count > 0 &&
@@ -1251,7 +1319,7 @@ public partial class MainWindow : Window
         ClearHistoryText.Text = _selectedGroupKind == LibraryGroupKind.ContinueWatching
             ? "Listeyi Temizle"
             : "Geçmişi Temizle";
-        ChannelCount.Text = $"{channels.Count:N0} içerik";
+        ChannelCount.Text = $"{channels.Count:N0} {L("içerik")}";
     }
 
     private static bool ContainsAdult(string value) =>
@@ -1274,7 +1342,7 @@ public partial class MainWindow : Window
                 .Select(MediaBrowserItem.FromSeries)
                 .ToList();
             ChannelList.ItemsSource = shows;
-            BrowserTitle.Text = "DİZİLER";
+            BrowserTitle.Text = L("DİZİLER");
             SeriesBackButton.IsVisible = false;
             ChannelCount.Text = $"{shows.Count:N0} dizi";
             return;
@@ -1307,9 +1375,9 @@ public partial class MainWindow : Window
             .Select(channel => MediaBrowserItem.FromEpisode(channel))
             .ToList();
         ChannelList.ItemsSource = episodes;
-        BrowserTitle.Text = _selectedSeriesSeason.HasValue ? $"SEZON {_selectedSeriesSeason}" : "DİĞER BÖLÜMLER";
+        BrowserTitle.Text = _selectedSeriesSeason.HasValue ? $"{L("SEZON")} {_selectedSeriesSeason}" : L("DİĞER BÖLÜMLER");
         SeriesBackButton.IsVisible = true;
-        ChannelCount.Text = $"{episodes.Count:N0} bölüm";
+        ChannelCount.Text = $"{episodes.Count:N0} {L("bölüm")}";
     }
 
     private void ResetSeriesBrowser()
@@ -1378,6 +1446,9 @@ public partial class MainWindow : Window
         _media.AddOption(":network-caching=1800");
         _media.AddOption(":http-reconnect");
         NowPlaying.Text = channel.Name;
+        NowPlayingLogo.LogoUrl = channel.LogoUrl;
+        NowPlayingLogo.Initials = channel.Initials;
+        NowPlayingLogo.IsVisible = true;
         PlaybackKindBadge.Text = channel.Badge;
         _playingContent = channel.Kind;
         _playingChannel = channel;
@@ -1387,7 +1458,7 @@ public partial class MainWindow : Window
         _historyRecordedForCurrentPlayback = false;
         _pendingResumePosition = GetResumePosition(channel);
         UpdateFavoriteButton();
-        PlaybackStatus.Text = "Yayına bağlanılıyor...";
+        PlaybackStatus.Text = L("Yayına bağlanılıyor...");
         PlayPauseButton.IsEnabled = true;
         UpdateChannelNavigationButtons();
         PlayPauseIcon.Data = Avalonia.Media.Geometry.Parse("M3,2 L7,2 L7,18 L3,18 Z M13,2 L17,2 L17,18 L13,18 Z");
@@ -1417,8 +1488,10 @@ public partial class MainWindow : Window
 
         PlayerView.IsVisible = false;
         PlayerPlaceholder.IsVisible = true;
-        NowPlaying.Text = "İzlemek için bir kanal seçin";
-        PlaybackStatus.Text = "Hazır";
+        NowPlaying.Text = L("İzlemek için bir kanal seçin");
+        NowPlayingLogo.IsVisible = false;
+        NowPlayingLogo.LogoUrl = null;
+        PlaybackStatus.Text = L("Hazır");
         PlaybackKindBadge.Text = "HAZIR";
         PlayPauseButton.IsEnabled = false;
         Timeline.Value = 0;
@@ -1477,7 +1550,7 @@ public partial class MainWindow : Window
         if (channel is not { Kind: ContentKind.Live }) return;
 
         EpgDateText.Text = _selectedEpgDate.Date == DateTime.Today
-            ? "BUGÜN"
+            ? L("BUGÜN")
             : _selectedEpgDate.ToString("d MMMM dddd", CultureInfo.CurrentCulture).ToUpper(CultureInfo.CurrentCulture);
         EpgPreviousDayButton.IsEnabled = _selectedEpgDate.Date > DateTime.Today;
         EpgNextDayButton.IsEnabled = _selectedEpgDate.Date < DateTime.Today.AddDays(6);
@@ -1492,8 +1565,8 @@ public partial class MainWindow : Window
         EpgProgrammeList.IsVisible = items.Count > 0;
         EpgEmptyText.IsVisible = items.Count == 0;
         EpgEmptyText.Text = query.Length > 0
-            ? "Aramanızla eşleşen program bulunamadı."
-            : "Bu gün için yayın akışı bulunamadı.";
+            ? L("Aramanızla eşleşen program bulunamadı.")
+            : L("Bu gün için yayın akışı bulunamadı.");
 
         if (items.FindIndex(item => item.IsCurrent) is var currentIndex && currentIndex >= 0)
             Dispatcher.UIThread.Post(() => EpgProgrammeList.ScrollIntoView(currentIndex));
@@ -1602,7 +1675,7 @@ public partial class MainWindow : Window
         var isFavorite = _playingChannel is not null && FindLibraryItem(_playingChannel)?.IsFavorite == true;
         FavoriteOutlineIcon.IsVisible = !isFavorite;
         FavoriteFilledIcon.IsVisible = isFavorite;
-        ToolTip.SetTip(FavoriteButton, isFavorite ? "Favorilerden çıkar" : "Favorilere ekle");
+        ToolTip.SetTip(FavoriteButton, L(isFavorite ? "Favorilerden çıkar" : "Favorilere ekle"));
     }
 
     private void RemoveRecentItem_Click(object? sender, RoutedEventArgs e)
@@ -1683,6 +1756,7 @@ public partial class MainWindow : Window
     {
         if (_mediaPlayer is not null) _mediaPlayer.Volume = (int)e.NewValue;
         if (e.NewValue > 0) _lastAudibleVolume = e.NewValue;
+        if (VolumeValueText is not null) VolumeValueText.Text = $"%{e.NewValue:0}";
         if (VolumeWaveIcon is not null) VolumeWaveIcon.IsVisible = e.NewValue > 0;
         if (VolumeMutedIcon is not null) VolumeMutedIcon.IsVisible = e.NewValue <= 0;
         if (_fullscreenVolumeWaveIcon is not null) _fullscreenVolumeWaveIcon.IsVisible = e.NewValue > 0;
@@ -1873,7 +1947,7 @@ public partial class MainWindow : Window
         _pendingResumePosition = null;
         if (resumeAt >= length - 10_000) return;
         _mediaPlayer.Time = Math.Clamp(resumeAt, 0, length);
-        PlaybackStatus.Text = $"Kaldığınız yerden devam ediyor · {FormatTime(resumeAt)}";
+        PlaybackStatus.Text = $"{L("Kaldığınız yerden devam ediyor")} · {FormatTime(resumeAt)}";
     }
 
     private void SaveCurrentPlaybackProgress()
@@ -1950,12 +2024,12 @@ public partial class MainWindow : Window
 
     private static string FormatRelativeTime(DateTimeOffset? timestamp)
     {
-        if (!timestamp.HasValue) return "az önce";
+        if (!timestamp.HasValue) return L("az önce");
         var elapsed = DateTimeOffset.UtcNow - timestamp.Value;
-        if (elapsed.TotalMinutes < 1) return "az önce";
-        if (elapsed.TotalHours < 1) return $"{Math.Max(1, (int)elapsed.TotalMinutes)} dk önce";
-        if (elapsed.TotalDays < 1) return $"{Math.Max(1, (int)elapsed.TotalHours)} sa önce";
-        return $"{Math.Max(1, (int)elapsed.TotalDays)} gün önce";
+        if (elapsed.TotalMinutes < 1) return L("az önce");
+        if (elapsed.TotalHours < 1) return $"{Math.Max(1, (int)elapsed.TotalMinutes)} {L("dk önce")}";
+        if (elapsed.TotalDays < 1) return $"{Math.Max(1, (int)elapsed.TotalHours)} {L("sa önce")}";
+        return $"{Math.Max(1, (int)elapsed.TotalDays)} {L("gün önce")}";
     }
 
     private static string FormatTime(long milliseconds)
@@ -1979,7 +2053,7 @@ public partial class MainWindow : Window
         _playerOverlayStatus = new TextBlock
         {
             Text = PlaybackStatus.Text,
-            Foreground = new SolidColorBrush(Color.Parse("#C9B7B3")),
+            Foreground = new SolidColorBrush(Color.Parse("#A3ABB8")),
             FontSize = 10,
             TextTrimming = TextTrimming.CharacterEllipsis,
             Margin = new Avalonia.Thickness(0, 5, 0, 0)
@@ -1987,7 +2061,7 @@ public partial class MainWindow : Window
         _playerOverlayTimeLabel = new TextBlock
         {
             Text = TimeLabel.Text,
-            Foreground = new SolidColorBrush(Color.Parse("#C9B7B3")),
+            Foreground = new SolidColorBrush(Color.Parse("#A3ABB8")),
             FontSize = 10,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Avalonia.Thickness(12, 0, 0, 0)
@@ -2038,7 +2112,7 @@ public partial class MainWindow : Window
             VolumeSlider.Value = e.NewValue;
         };
         _playerOverlayPlayPauseIcon = CreateFullscreenIcon("M3,2 L7,2 L7,18 L3,18 Z M13,2 L17,2 L17,18 L13,18 Z");
-        _playerOverlayPlayPauseIcon.Fill = new SolidColorBrush(Color.Parse("#191316"));
+        _playerOverlayPlayPauseIcon.Fill = new SolidColorBrush(Color.Parse("#0F1114"));
         var playPauseButton = CreatePlayerOverlayButton(_playerOverlayPlayPauseIcon, primary: true);
         playPauseButton.Click += PlayPause_Click;
         var fullscreenButton = CreatePlayerOverlayButton(CreatePlayerOverlayStrokeIcon("M4,9 L4,4 L9,4 M15,4 L20,4 L20,9 M20,15 L20,20 L15,20 M9,20 L4,20 L4,15"));
@@ -2059,10 +2133,10 @@ public partial class MainWindow : Window
 
         var liveBadge = new Border
         {
-            Background = new SolidColorBrush(Color.Parse("#40FF4D5E")),
+            Background = new SolidColorBrush(Color.Parse("#40EA2E4E")),
             CornerRadius = new Avalonia.CornerRadius(100),
             Padding = new Avalonia.Thickness(8, 4),
-            Child = new TextBlock { Text = "CANLI", Foreground = new SolidColorBrush(Color.Parse("#FF9BA6")), FontSize = 8, FontWeight = FontWeight.Bold },
+            Child = new TextBlock { Text = "CANLI", Foreground = new SolidColorBrush(Color.Parse("#FF97A6")), FontSize = 8, FontWeight = FontWeight.Bold },
             HorizontalAlignment = HorizontalAlignment.Left,
             Margin = new Avalonia.Thickness(0, 0, 0, 6)
         };
@@ -2082,8 +2156,8 @@ public partial class MainWindow : Window
         layout.Children.Add(controlRow);
         var surface = new Border
         {
-            Background = new SolidColorBrush(Color.Parse("#E6191316")),
-            BorderBrush = new SolidColorBrush(Color.Parse("#50463739")),
+            Background = new SolidColorBrush(Color.Parse("#E60F1114")),
+            BorderBrush = new SolidColorBrush(Color.Parse("#50262B33")),
             BorderThickness = new Avalonia.Thickness(1, 1, 1, 0),
             Child = layout
         };
@@ -2110,8 +2184,8 @@ public partial class MainWindow : Window
         Height = primary ? 50 : 40,
         Padding = new Avalonia.Thickness(0),
         CornerRadius = new Avalonia.CornerRadius(primary ? 25 : 20),
-        Background = primary ? new SolidColorBrush(Color.Parse("#EE5A3C")) : Brushes.Transparent,
-        BorderBrush = primary ? new SolidColorBrush(Color.Parse("#FF8A6B")) : Brushes.Transparent,
+        Background = primary ? new SolidColorBrush(Color.Parse("#F2622E")) : Brushes.Transparent,
+        BorderBrush = primary ? new SolidColorBrush(Color.Parse("#FF8A5C")) : Brushes.Transparent,
         BorderThickness = new Avalonia.Thickness(primary ? 1 : 0),
         Foreground = Brushes.White,
         FontWeight = FontWeight.SemiBold,
@@ -2290,7 +2364,7 @@ public partial class MainWindow : Window
         _fullscreenTimeLabel = new TextBlock
         {
             Text = TimeLabel.Text,
-            Foreground = new SolidColorBrush(Color.Parse("#C9B7B3")),
+            Foreground = new SolidColorBrush(Color.Parse("#A3ABB8")),
             FontSize = 10,
             Margin = new Avalonia.Thickness(12, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center
@@ -2335,7 +2409,7 @@ public partial class MainWindow : Window
         };
 
         _fullscreenPlayPauseIcon = CreateFullscreenIcon("M3,2 L7,2 L7,18 L3,18 Z M13,2 L17,2 L17,18 L13,18 Z");
-        _fullscreenPlayPauseIcon.Fill = new SolidColorBrush(Color.Parse("#191316"));
+        _fullscreenPlayPauseIcon.Fill = new SolidColorBrush(Color.Parse("#0F1114"));
         var playPauseButton = CreateFullscreenActionButton(_fullscreenPlayPauseIcon, true);
         playPauseButton.Click += PlayPause_Click;
         _fullscreenPreviousChannelButton = CreateFullscreenActionButton(CreateFullscreenIcon("M17,4 L7,10 L17,16 Z M4,4 L4,16"));
@@ -2397,8 +2471,8 @@ public partial class MainWindow : Window
 
         _fullscreenControlsOverlaySurface = new Border
         {
-            Background = new SolidColorBrush(Color.Parse("#EE191316")),
-            BorderBrush = new SolidColorBrush(Color.Parse("#574548")),
+            Background = new SolidColorBrush(Color.Parse("#EE0F1114")),
+            BorderBrush = new SolidColorBrush(Color.Parse("#343B45")),
             BorderThickness = new Avalonia.Thickness(1),
             CornerRadius = new Avalonia.CornerRadius(18),
             Child = overlayLayout
@@ -2463,7 +2537,7 @@ public partial class MainWindow : Window
         Padding = new Avalonia.Thickness(12),
         CornerRadius = new Avalonia.CornerRadius(23),
         BorderThickness = new Avalonia.Thickness(0),
-        Background = new SolidColorBrush(Color.Parse(primary ? "#EE5A3C" : "#2A2124")),
+        Background = new SolidColorBrush(Color.Parse(primary ? "#F2622E" : "#1C2026")),
         Content = content,
         HorizontalContentAlignment = HorizontalAlignment.Center,
         VerticalContentAlignment = VerticalAlignment.Center
@@ -2578,8 +2652,8 @@ public partial class MainWindow : Window
             HeaderPanel.IsVisible = true;
             ChannelPanel.IsVisible = true;
             PlaybackStatus.Text = _mediaPlayer.IsPlaying && _playingChannel is { } playingChannel
-                ? (_playingContent == ContentKind.Live ? GetNowPlayingStatus(playingChannel) : "Oynatılıyor")
-                : "Hazır";
+                ? (_playingContent == ContentKind.Live ? GetNowPlayingStatus(playingChannel) : L("Oynatılıyor"))
+                : L("Hazır");
             if (_playingChannel is not null) Dispatcher.UIThread.Post(ShowPlayerOverlay);
         }
     }
@@ -2590,17 +2664,21 @@ public partial class MainWindow : Window
         UpdatePlayerOverlayText();
     });
 
-    private void ShowSettings_Click(object? sender, RoutedEventArgs e)
-    {
-        ShowSettings();
-    }
-    private void ShowSettingsFromHome_Click(object? sender, RoutedEventArgs e)
-    {
-        ShowSettings();
-    }
+    private static string AppVersion => (Assembly.GetExecutingAssembly().GetName().Version ?? new Version(1, 0, 0)).ToString(3);
+
+    private static string L(string text) => Localization.T(text);
+
+    private void ShowSettings_Click(object? sender, RoutedEventArgs e) => ShowSettings();
+
+    private void ShowSettingsFromHome_Click(object? sender, RoutedEventArgs e) => ShowSettings();
+
+    private void ShowAbout_Click(object? sender, RoutedEventArgs e) => ShowSettings("about");
+
+    private void ShowAboutFromHome_Click(object? sender, RoutedEventArgs e) => ShowSettings("about");
+
     private void HideSettings_Click(object? sender, RoutedEventArgs e) => HideSettings();
 
-    private void ShowSettings()
+    private void ShowSettings(string section = "playlists")
     {
         if (_isPlayerFullscreen) SetPlayerFullscreen(false);
         StopPlaybackForNavigation();
@@ -2609,43 +2687,117 @@ public partial class MainWindow : Window
         ContentArea.IsVisible = false;
         Sidebar.IsVisible = false;
         RootGrid.ColumnDefinitions = new ColumnDefinitions("0,*");
-        AboutPage.IsVisible = false;
+        ShowSettingsSection(section);
         SettingsPage.IsVisible = true;
     }
 
     private void HideSettings()
     {
         SettingsPage.IsVisible = false;
-        AboutPage.IsVisible = false;
         OpenLibrary(_selectedContent);
     }
 
-    private void ShowAbout_Click(object? sender, RoutedEventArgs e)
+    private void SettingsTab_Click(object? sender, RoutedEventArgs e)
     {
-        ShowAbout();
+        if (sender is Button { Tag: string section }) ShowSettingsSection(section);
     }
 
-    private void ShowAboutFromHome_Click(object? sender, RoutedEventArgs e)
+    // Ayarlar bölümleri tek sayfada durur; yalnızca seçili olan görünür.
+    private void ShowSettingsSection(string section)
     {
-        ShowAbout();
+        _settingsSection = section;
+        SetSettingsTab(SettingsTabPlaylists, SettingsTabPlaylistsIcon, SettingsSectionPlaylists, section == "playlists");
+        SetSettingsTab(SettingsTabGeneral, SettingsTabGeneralIcon, SettingsSectionGeneral, section == "general");
+        SetSettingsTab(SettingsTabUpdate, SettingsTabUpdateIcon, SettingsSectionUpdate, section == "update");
+        SetSettingsTab(SettingsTabPrivacy, SettingsTabPrivacyIcon, SettingsSectionPrivacy, section == "privacy");
+        SetSettingsTab(SettingsTabAbout, SettingsTabAboutIcon, SettingsSectionAbout, section == "about");
+
+        SettingsSubtitleText.Text = section switch
+        {
+            "general" => L("Genel"),
+            "update" => L("Güncelleme"),
+            "privacy" => L("Gizlilik"),
+            "about" => L("Hakkında"),
+            _ => L("Oynatma Listeleri")
+        };
+
+        if (section == "update") RefreshUpdateSection();
+        if (section != "privacy") return;
+        SettingsDataPathText.Text = SettingsDirectory;
+        SettingsPrivacyStatus.IsVisible = false;
     }
 
-    private void ShowAbout()
+    private static void SetSettingsTab(Button tab, Avalonia.Controls.Shapes.Path icon, Control section, bool active)
     {
-        if (_isPlayerFullscreen) SetPlayerFullscreen(false);
-        StopPlaybackForNavigation();
-        HomePage.IsVisible = false;
-        ContentArea.IsVisible = false;
-        Sidebar.IsVisible = false;
-        RootGrid.ColumnDefinitions = new ColumnDefinitions("0,*");
-        SettingsPage.IsVisible = false;
-        AboutPage.IsVisible = true;
+        tab.Classes.Set("active", active);
+        icon.Stroke = new SolidColorBrush(Color.Parse(active ? "#FF8A5C" : "#A3ABB8"));
+        section.IsVisible = active;
     }
 
-    private void HideAbout_Click(object? sender, RoutedEventArgs e)
+    private void SetLanguage_Click(object? sender, RoutedEventArgs e)
     {
-        AboutPage.IsVisible = false;
-        OpenLibrary(_selectedContent);
+        if (sender is Button { Tag: string language }) Localization.SetLanguage(language);
+    }
+
+    // Dil değişince XAML'deki sabit metinler ve kod içinde üretilen metinler yeniden yazılır.
+    private void ApplyLanguage()
+    {
+        Localization.Apply(this);
+
+        var english = Localization.Language == Localization.English;
+        LanguageTurkishButton.Classes.Set("active", !english);
+        LanguageEnglishButton.Classes.Set("active", english);
+        LanguageTurkishCheck.IsVisible = !english;
+        LanguageEnglishCheck.IsVisible = english;
+
+        AboutVersionText.Text = $"{L("Sürüm")} {AppVersion}";
+        HomeVersionText.Text = $"© {DateTime.Now.Year} Berk Güçlükol · {L("Sürüm")} {AppVersion}";
+        ShowSettingsSection(_settingsSection);
+
+        UpdateHomeDashboard();
+        if (_channels.Count > 0) RefreshGroups(preserveSelection: true, resetSeriesBrowser: false);
+    }
+
+    private void OpenDataFolder_Click(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Directory.CreateDirectory(SettingsDirectory);
+            Process.Start(new ProcessStartInfo(SettingsDirectory) { UseShellExecute = true });
+        }
+        catch
+        {
+            // Klasör açılamazsa yol ayarlar sayfasında yazılı kalır.
+        }
+    }
+
+    private void ClearWatchData_Click(object? sender, RoutedEventArgs e)
+    {
+        _libraryState = new LibraryState();
+        SaveLibraryState();
+        if (_channels.Count > 0) RefreshGroups(preserveSelection: true, resetSeriesBrowser: false);
+        UpdateHomeDashboard();
+        ShowPrivacyStatus(L("İzleme geçmişi, favoriler ve kaldığınız konumlar silindi."));
+    }
+
+    private void ClearCacheData_Click(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (Directory.Exists(PlaylistCacheDirectory)) Directory.Delete(PlaylistCacheDirectory, true);
+        }
+        catch
+        {
+            // Kullanımdaki bir önbellek dosyası silinemezse sonraki açılışta üzerine yazılır.
+        }
+
+        ShowPrivacyStatus(L("Önbellek temizlendi. Listeler bir sonraki açılışta yeniden indirilir."));
+    }
+
+    private void ShowPrivacyStatus(string text)
+    {
+        SettingsPrivacyStatus.Text = text;
+        SettingsPrivacyStatus.IsVisible = true;
     }
 
     private void OpenGithub_Click(object? sender, RoutedEventArgs e) =>
@@ -2816,7 +2968,7 @@ public sealed record Channel(string Name, string Url, string Group, string? Logo
 {
     public string Id { get; } = CreateStableId(Url);
     public string Initials => string.Concat(Name.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(p => p[0])).ToUpperInvariant();
-    public string Badge => Kind switch { ContentKind.Movie => "FİLM", ContentKind.Series => "DİZİ", _ => "CANLI" };
+    public string Badge => Localization.T(Kind switch { ContentKind.Movie => "FİLM", ContentKind.Series => "DİZİ", _ => "CANLI" });
     public SeriesMetadata Series { get; } = SeriesMetadata.Parse(Name);
 
     private static string CreateStableId(string value)
@@ -2903,8 +3055,8 @@ public sealed class MediaBrowserItem
         Kind = MediaBrowserItemKind.Episode,
         CanRemoveFromHistory = canRemoveFromHistory,
         Name = channel.Name,
-        Subtitle = subtitle ?? (channel.Series.Season.HasValue ? $"Sezon {channel.Series.Season}" : "Diğer bölümler"),
-        Badge = badge ?? (channel.Series.Episode.HasValue ? $"BÖLÜM {channel.Series.Episode}" : "OYNAT"),
+        Subtitle = subtitle ?? (channel.Series.Season.HasValue ? $"{Localization.T("Sezon")} {channel.Series.Season}" : Localization.T("Diğer bölümler")),
+        Badge = badge ?? (channel.Series.Episode.HasValue ? $"{Localization.T("BÖLÜM")} {channel.Series.Episode}" : Localization.T("OYNAT")),
         LogoUrl = channel.LogoUrl,
         Channel = channel,
         SeriesTitle = channel.Series.Title,
@@ -2918,8 +3070,8 @@ public sealed class MediaBrowserItem
         {
             Kind = MediaBrowserItemKind.Series,
             Name = group.Key,
-            Subtitle = $"{group.Count():N0} bölüm",
-            Badge = "DİZİ  ›",
+            Subtitle = $"{group.Count():N0} {Localization.T("bölüm")}",
+            Badge = Localization.T("DİZİ  ›"),
             LogoUrl = group.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c.LogoUrl))?.LogoUrl ?? first.LogoUrl,
             SeriesTitle = group.Key
         };
@@ -2928,9 +3080,9 @@ public sealed class MediaBrowserItem
     public static MediaBrowserItem FromSeason(string seriesTitle, int? season, int episodeCount, string? logoUrl) => new()
     {
         Kind = MediaBrowserItemKind.Season,
-        Name = season.HasValue ? $"Sezon {season}" : "Diğer Bölümler",
-        Subtitle = $"{episodeCount:N0} bölüm",
-        Badge = "AÇ  ›",
+        Name = season.HasValue ? $"{Localization.T("Sezon")} {season}" : Localization.T("Diğer Bölümler"),
+        Subtitle = $"{episodeCount:N0} {Localization.T("bölüm")}",
+        Badge = Localization.T("AÇ  ›"),
         LogoUrl = logoUrl,
         SeriesTitle = seriesTitle,
         Season = season
@@ -2953,8 +3105,8 @@ public sealed class PlaylistEntry
                             (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
     public bool IsXtream => SourceKind == PlaylistSourceKind.Xtream;
     public string SourceTypeText => IsXtream ? "XTREAM" : IsRemote ? "URL" : "DOSYA";
-    public string DisplayPath => IsXtream ? $"{DisplayServer ?? "Xtream sunucusu"} · kullanıcı bilgileri gizli" : Path;
-    public string ActiveText => IsActive ? "✓ AKTİF" : "Etkinleştir";
+    public string DisplayPath => IsXtream ? $"{DisplayServer ?? Localization.T("Xtream sunucusu")} · {Localization.T("kullanıcı bilgileri gizli")}" : Path;
+    public string ActiveText => Localization.T(IsActive ? "✓ AKTİF" : "Etkinleştir");
 }
 
 public sealed record EpgProgramme(string Title, string? Description, string? Category, DateTimeOffset Start, DateTimeOffset Stop);
@@ -2988,10 +3140,10 @@ public sealed class EpgProgrammeItem
     public string? Category { get; }
     public string TimeText { get; }
     public bool IsCurrent { get; }
-    public string StatusText => "ŞİMDİ YAYINDA";
-    public IBrush Background => new SolidColorBrush(Color.Parse(IsCurrent ? "#403233" : "#251D20"));
-    public IBrush BorderBrush => new SolidColorBrush(Color.Parse(IsCurrent ? "#EE5A3C" : "#463739"));
-    public IBrush TimeForeground => new SolidColorBrush(Color.Parse(IsCurrent ? "#FF8A6B" : "#A08C89"));
+    public string StatusText => Localization.T("ŞİMDİ YAYINDA");
+    public IBrush Background => new SolidColorBrush(Color.Parse(IsCurrent ? "#2D333C" : "#171A1F"));
+    public IBrush BorderBrush => new SolidColorBrush(Color.Parse(IsCurrent ? "#F2622E" : "#262B33"));
+    public IBrush TimeForeground => new SolidColorBrush(Color.Parse(IsCurrent ? "#FF8A5C" : "#8791A0"));
 }
 
 public sealed class LibraryState
