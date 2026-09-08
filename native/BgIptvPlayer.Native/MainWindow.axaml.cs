@@ -64,7 +64,6 @@ public partial class MainWindow : Window
     private bool _fullscreenControlsRevealArmed = true;
     private bool _historyRecordedForCurrentPlayback;
     private bool _suppressGroupSelection;
-    private bool _suppressChannelSelection;
     private bool _isSeeking;
     private long? _pendingResumePosition;
     private double _lastAudibleVolume = 80;
@@ -116,7 +115,6 @@ public partial class MainWindow : Window
     private bool _parentalUnlocked;
     private string _selectedCollection = "";
     private bool _isMiniPlayer;
-    private bool _keyboardBrowsing;
     private PixelPoint _miniRestorePosition;
     private Size _miniRestoreSize;
     private WindowState _miniRestoreState;
@@ -143,6 +141,8 @@ public partial class MainWindow : Window
         UpdatePlaybackOptionChips();
         RefreshHiddenGroupsView();
         if (TrackButton.Flyout is Flyout trackFlyout) trackFlyout.Opening += (_, _) => BuildTrackMenu(TrackFlyoutPanel);
+        ChannelList.AddHandler(PointerPressedEvent, ChannelList_PointerPressed, RoutingStrategies.Tunnel, true);
+        EpgProgrammeList.AddHandler(PointerPressedEvent, EpgProgrammeList_PointerPressed, RoutingStrategies.Tunnel, true);
         Timeline.AddHandler(PointerPressedEvent, Timeline_PointerPressed, RoutingStrategies.Tunnel, true);
         Timeline.AddHandler(PointerReleasedEvent, Timeline_PointerReleased, RoutingStrategies.Tunnel | RoutingStrategies.Bubble, true);
         Core.Initialize();
@@ -1141,14 +1141,8 @@ public partial class MainWindow : Window
     {
         switch (e.Key)
         {
-            case Key.Up:
-            case Key.Down:
-                _keyboardBrowsing = true;
-                Dispatcher.UIThread.Post(() => _keyboardBrowsing = false, DispatcherPriority.Background);
-                break;
             case Key.Enter:
-                _keyboardBrowsing = false;
-                ChannelList_SelectionChanged(ChannelList, null!);
+                if (ChannelList.SelectedItem is MediaBrowserItem selected) OpenBrowserItem(selected);
                 e.Handled = true;
                 break;
             case Key.Left:
@@ -1623,10 +1617,27 @@ public partial class MainWindow : Window
         ApplyFilter();
     }
 
-    private void ChannelList_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+    // Tek tiklama yalnizca secer. Icerik sol cift tik ya da Enter ile acilir;
+    // boylece sag tik menusu acmak oynatmayi baslatmaz.
+    private void ChannelList_PointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (_suppressChannelSelection) return;
-        if (ChannelList.SelectedItem is not MediaBrowserItem item) return;
+        if (e.ClickCount != 2) return;
+        if (!e.GetCurrentPoint(ChannelList).Properties.IsLeftButtonPressed) return;
+        if (FindBrowserItem(e.Source as StyledElement) is not { } item) return;
+
+        e.Handled = true;
+        OpenBrowserItem(item);
+    }
+
+    private static MediaBrowserItem? FindBrowserItem(StyledElement? element)
+    {
+        for (var node = element; node is not null; node = node.Parent)
+            if (node is ListBoxItem { DataContext: MediaBrowserItem item }) return item;
+        return null;
+    }
+
+    private void OpenBrowserItem(MediaBrowserItem item)
+    {
         if (item.Kind == MediaBrowserItemKind.Series)
         {
             _selectedSeriesTitle = item.SeriesTitle;
@@ -1647,9 +1658,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (item.Channel is not { } channel) return;
-        if (_keyboardBrowsing) return;
-        PlayChannel(channel);
+        if (item.Channel is { } channel) PlayChannel(channel);
     }
 
     // Kaynak ilk denemede acilmazsa kisa araliklarla iki kez daha denenir;
@@ -1760,9 +1769,7 @@ public partial class MainWindow : Window
         UpdateFavoriteButton();
         UpdatePlayPauseIcons(false);
 
-        _suppressChannelSelection = true;
         ChannelList.SelectedIndex = -1;
-        _suppressChannelSelection = false;
     }
 
     private void ToggleEpgPanel_Click(object? sender, RoutedEventArgs e)
@@ -1961,11 +1968,18 @@ public partial class MainWindow : Window
         EpgEmptyText.Text = L("Aramanızla eşleşen program bulunamadı.");
     }
 
-    private void EpgProgrammeList_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+    private void EpgProgrammeList_PointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (EpgProgrammeList.SelectedItem is not EpgProgrammeItem { Channel: { } channel }) return;
-        EpgProgrammeList.SelectedIndex = -1;
-        PlayChannel(channel);
+        if (e.ClickCount != 2) return;
+        if (!e.GetCurrentPoint(EpgProgrammeList).Properties.IsLeftButtonPressed) return;
+
+        for (var node = e.Source as StyledElement; node is not null; node = node.Parent)
+        {
+            if (node is not ListBoxItem { DataContext: EpgProgrammeItem { Channel: { } channel } }) continue;
+            e.Handled = true;
+            PlayChannel(channel);
+            return;
+        }
     }
 
     private void EpgPreviousDay_Click(object? sender, RoutedEventArgs e)
@@ -2021,9 +2035,7 @@ public partial class MainWindow : Window
         var item = (ChannelList.ItemsSource as IEnumerable<MediaBrowserItem>)?
             .FirstOrDefault(candidate => candidate.Channel is { } listed && string.Equals(listed.Url, channel.Url, StringComparison.OrdinalIgnoreCase));
         if (item is null) return;
-        _suppressChannelSelection = true;
         ChannelList.SelectedItem = item;
-        _suppressChannelSelection = false;
         ChannelList.ScrollIntoView(item);
     }
 
@@ -3226,8 +3238,8 @@ public partial class MainWindow : Window
             WindowState = _previousWindowState == WindowState.FullScreen ? WindowState.Normal : _previousWindowState;
             RootGrid.ColumnDefinitions = new ColumnDefinitions("350,*");
             ContentArea.Margin = new Avalonia.Thickness(0);
-            ContentArea.RowDefinitions = new RowDefinitions("Auto,*");
-            ContentBody.ColumnDefinitions = new ColumnDefinitions("430,*");
+            ContentArea.RowDefinitions = new RowDefinitions("76,*");
+            ContentBody.ColumnDefinitions = new ColumnDefinitions("486,*");
             ContentBody.ColumnSpacing = 0;
             Grid.SetColumn(PlayerPanel, 1);
             Grid.SetColumnSpan(PlayerPanel, 1);
@@ -4118,6 +4130,7 @@ public partial class MainWindow : Window
         ChannelPanel.IsVisible = true;
         PlayerControls.IsVisible = true;
         RootGrid.ColumnDefinitions = new ColumnDefinitions("350,*");
+        ContentArea.RowDefinitions = new RowDefinitions("76,*");
         ContentBody.ColumnDefinitions = new ColumnDefinitions("486,*");
         PlayerLayout.RowDefinitions = new RowDefinitions("*,Auto");
     }
