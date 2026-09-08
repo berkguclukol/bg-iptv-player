@@ -17,6 +17,7 @@ public sealed class AppPreferences
     public string AccentColor { get; set; } = "#F2622E";
     public string Theme { get; set; } = "dark";
     public string? TmdbApiKey { get; set; }
+    public string? DisplayName { get; set; }
     public int SubtitleFontSize { get; set; } = 16;
     public bool AutoPlayNextEpisode { get; set; } = true;
     public bool BackgroundRefresh { get; set; } = true;

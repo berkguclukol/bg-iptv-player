@@ -133,6 +133,8 @@ public partial class MainWindow : Window
         ApplyAccentColor();
         UpdateSortMenu();
         TmdbKeyBox.Text = Preferences.Current.TmdbApiKey ?? "";
+        DisplayNameBox.Text = Preferences.Current.DisplayName ?? "";
+        DisplayNameBox.Watermark = Environment.UserName;
         RefreshParentalView();
         RefreshCollectionsView();
         ResumeLastChannelSwitch.IsChecked = Preferences.Current.ResumeLastChannel;
@@ -1265,19 +1267,81 @@ public partial class MainWindow : Window
             : $"{matches.Count:N0} {L("sonuç")}";
     }
 
+    // Ana ekrandaki selamlama, sayilar ve grup cipleri.
     private void UpdateHomeDashboard()
     {
-        var now = DateTime.Now;
-        HomeTimeText.Text = now.ToString("HH:mm");
-        HomeDateText.Text = now.ToString("d MMMM dddd");
-        HomeLiveCount.Text = $"{_channels.Count(c => c.Kind == ContentKind.Live):N0} kanal";
-        HomeMovieCount.Text = $"{_channels.Count(c => c.Kind == ContentKind.Movie):N0} film";
+        HomeTimeText.Text = DateTime.Now.ToString("HH:mm");
+        HomeDateText.Text = DateTime.Now.ToString("d MMMM dddd", CultureInfo.CurrentCulture).ToUpper(CultureInfo.CurrentCulture);
+        HomeGreetingText.Text = BuildGreeting();
+
+        var live = _channels.Where(c => c.Kind == ContentKind.Live).ToList();
+        HomeLiveCount.Text = $"{live.Count:N0}";
+        var groupCount = live.Select(c => c.Group).Distinct(StringComparer.CurrentCultureIgnoreCase).Count();
+        HomeLiveSubtitle.Text = $"{L("kanal")} · {groupCount:N0} {L("grup")}";
+
+        HomeLiveChips.Children.Clear();
+        foreach (var group in live
+                     .GroupBy(c => c.Group)
+                     .Where(g => !ContainsAdult(g.Key) && !IsGroupHidden(g.Key) && !IsGroupLocked(g.Key))
+                     .OrderByDescending(g => g.Count())
+                     .Take(4))
+            HomeLiveChips.Children.Add(CreateHomeChip(group.Key));
+
+        var movies = _channels.Count(c => c.Kind == ContentKind.Movie);
+        HomeMovieCount.Text = $"{movies:N0}";
+        var newMovies = _channels.Count(c => c.Kind == ContentKind.Movie && Catalog.IsRecentlyAdded(c.Id));
+        HomeMovieSubtitle.Text = newMovies > 0
+            ? $"{L("film")} · {newMovies:N0} {L("yeni")}"
+            : L("film");
+
         var seriesCount = _channels
             .Where(c => c.Kind == ContentKind.Series)
             .Select(c => string.IsNullOrWhiteSpace(c.Series.Title) ? c.Name : c.Series.Title)
             .Distinct(StringComparer.CurrentCultureIgnoreCase)
             .Count();
-        HomeSeriesCount.Text = $"{seriesCount:N0} dizi";
+        HomeSeriesCount.Text = $"{seriesCount:N0}";
+        var resumeCount = _channels.Count(c => c.Kind == ContentKind.Series && IsResumeCandidate(FindLibraryItem(c)));
+        HomeSeriesSubtitle.Text = resumeCount > 0
+            ? $"{L("dizi")} · {resumeCount:N0} {L("bölümde kaldın")}"
+            : L("dizi");
+    }
+
+    private static Control CreateHomeChip(string text) => new Border
+    {
+        BorderBrush = AppTheme.Brush("Border2Bg"),
+        BorderThickness = new Avalonia.Thickness(1),
+        CornerRadius = new Avalonia.CornerRadius(3),
+        Padding = new Avalonia.Thickness(12, 6),
+        Margin = new Avalonia.Thickness(0, 0, 8, 0),
+        Child = new TextBlock
+        {
+            Text = text.ToUpper(CultureInfo.CurrentCulture),
+            FontSize = 11,
+            Foreground = AppTheme.Brush("TextMutedBg"),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxWidth = 150
+        }
+    };
+
+    // Selamlama saate gore degisir; ad tercihte yoksa Windows hesap adi kullanilir.
+    private static string BuildGreeting()
+    {
+        var hour = DateTime.Now.Hour;
+        var greeting = hour switch
+        {
+            >= 5 and < 11 => L("Günaydın"),
+            >= 11 and < 17 => L("İyi günler"),
+            >= 17 and < 22 => L("İyi akşamlar"),
+            _ => L("İyi geceler")
+        };
+
+        var name = Preferences.Current.DisplayName is { Length: > 0 } custom
+            ? custom
+            : Environment.UserName;
+        var text = string.IsNullOrWhiteSpace(name) ? greeting : $"{greeting}, {name}";
+        return text.ToUpper(Localization.Language == Localization.English
+            ? CultureInfo.InvariantCulture
+            : new CultureInfo("tr-TR"));
     }
 
     private void SelectLibraryGroup(LibraryGroupKind kind)
@@ -3757,6 +3821,15 @@ public partial class MainWindow : Window
         ChannelLogo.PlaceholderIsLight = light;
     }
 
+    private void SaveDisplayName_Click(object? sender, RoutedEventArgs e)
+    {
+        var name = DisplayNameBox.Text?.Trim() ?? "";
+        Preferences.Current.DisplayName = name.Length == 0 ? null : name;
+        Preferences.Save();
+        UpdateHomeDashboard();
+        DisplayNameBox.Watermark = Environment.UserName;
+    }
+
     private void SetAccentColor_Click(object? sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: string accent }) return;
@@ -3777,15 +3850,8 @@ public partial class MainWindow : Window
         Resources["AccentTintBrush"] = new SolidColorBrush(Color.FromArgb(0x26, color.R, color.G, color.B));
         Resources["AccentTintStrongBrush"] = new SolidColorBrush(Color.FromArgb(0x33, color.R, color.G, color.B));
 
-        foreach (var glow in new[] { HomeLiveGlow, HomeMovieGlow, HomeSeriesGlow })
-            glow.Fill = new RadialGradientBrush
-            {
-                GradientStops =
-                {
-                    new GradientStop(Color.FromArgb(0x1F, color.R, color.G, color.B), 0),
-                    new GradientStop(Color.FromArgb(0x00, color.R, color.G, color.B), 1)
-                }
-            };
+        Resources["AccentGhostBrush"] = new SolidColorBrush(Color.FromArgb(0x21, color.R, color.G, color.B));
+        Resources["AccentStripeBrush"] = new SolidColorBrush(Color.FromArgb(0x0E, color.R, color.G, color.B));
 
         foreach (var swatch in AccentSwatches.Children.OfType<Button>())
             swatch.Classes.Set("active", swatch.Tag as string == accent);
