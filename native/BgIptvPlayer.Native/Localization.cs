@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
-using System.Text.Json;
 using Avalonia.Controls;
 using Avalonia.LogicalTree;
 
@@ -228,6 +226,133 @@ public static class Localization
         ["VERİ KLASÖRÜ"] = "DATA FOLDER",
         ["GELİŞTİREN"] = "DEVELOPER",
         ["KULLANILAN TEKNOLOJİLER"] = "BUILT WITH",
+        ["Yayın açılamadı, yeniden deneniyor"] = "Stream failed, retrying",
+        ["Oynatma seçenekleri"] = "Playback options",
+        ["OYNATMA HIZI"] = "PLAYBACK SPEED",
+        ["GÖRÜNTÜ ORANI"] = "ASPECT RATIO",
+        ["Otomatik"] = "Automatic",
+        ["Ekran görüntüsü al"] = "Take screenshot",
+        ["Ekran görüntüsü kaydedildi"] = "Screenshot saved",
+        ["Ekran görüntüsü alınamadı."] = "The screenshot could not be taken.",
+        ["Başlangıç"] = "Startup",
+        ["Son izlenen kanalı aç"] = "Open the last watched channel",
+        ["Uygulama açılınca liste yüklendikten sonra en son izlediğin yayın başlar."] = "After the playlist loads on launch, your last stream starts playing.",
+        ["Klavye kısayolları"] = "Keyboard shortcuts",
+        ["Boşluk"] = "Space",
+        ["Oynat / duraklat"] = "Play / pause",
+        ["10 saniye geri / ileri"] = "Back / forward 10 seconds",
+        ["Sesi artır / azalt"] = "Volume up / down",
+        ["Sessize al"] = "Mute",
+        ["Tam ekrandan çık"] = "Exit fullscreen",
+        ["Önceki / sonraki kanal"] = "Previous / next channel",
+        ["Son kanala dön"] = "Back to last channel",
+        ["Sorun bildirimi"] = "Reporting a problem",
+        ["Bir hata ile karşılaşırsan günlük dosyasını GitHub üzerinden paylaşabilirsin."] = "If you hit a bug you can share the log file through GitHub.",
+        ["Günlük dosyasını aç"] = "Open the log file",
+        ["Sorun bildir"] = "Report an issue",
+        ["Grubu gizle"] = "Hide group",
+        ["Gizli gruplar"] = "Hidden groups",
+        ["Bir gruba sağ tıklayıp gizleyebilirsin; gizlenen gruplar listede görünmez."] = "Right-click a group to hide it; hidden groups no longer appear in the list.",
+        ["Tümünü göster"] = "Show all",
+        ["Gizlenmiş grup yok."] = "No hidden groups.",
+        ["Göster"] = "Show",
+        ["Bu kanal"] = "This channel",
+        ["Tüm kanallar"] = "All channels",
+        ["Vurgu rengi"] = "Accent colour",
+        ["Düğmeler, rozetler ve seçili öğeler bu renkle çizilir."] = "Buttons, badges and selected items are drawn in this colour.",
+        ["Turuncu"] = "Orange",
+        ["Mavi"] = "Blue",
+        ["Mor"] = "Purple",
+        ["Yeşil"] = "Green",
+        ["Kırmızı"] = "Red",
+        ["Ses ve altyazı"] = "Audio and subtitles",
+        ["SES İZİ"] = "AUDIO TRACK",
+        ["ALTYAZI"] = "SUBTITLES",
+        ["ALTYAZI GECİKMESİ"] = "SUBTITLE DELAY",
+        ["ALTYAZI BOYUTU"] = "SUBTITLE SIZE",
+        ["Ses izi bulunamadı."] = "No audio track found.",
+        ["Kapalı"] = "Off",
+        ["Dosyadan altyazı yükle..."] = "Load subtitle from file...",
+        ["Altyazı dosyası seç"] = "Select a subtitle file",
+        ["Altyazı yüklendi"] = "Subtitle loaded",
+        ["Altyazı yüklenemedi."] = "The subtitle could not be loaded.",
+        ["Küçük"] = "Small",
+        ["Normal"] = "Normal",
+        ["Büyük"] = "Large",
+        ["Boyut değişikliği sonraki oynatmada uygulanır."] = "The size change applies the next time playback starts.",
+        ["Otomatik davranışlar"] = "Automatic behaviour",
+        ["Sonraki bölüme geç"] = "Play the next episode",
+        ["Bir bölüm bitince aynı dizinin sıradaki bölümü kendiliğinden başlar."] = "When an episode ends, the next episode of the same series starts on its own.",
+        ["Listeyi arka planda yenile"] = "Refresh the playlist in the background",
+        ["Uzak listeler altı saatte bir sessizce güncellenir, açılışı bekletmez."] = "Remote playlists are updated quietly every six hours without delaying startup.",
+        ["Sonraki bölüm"] = "Next episode",
+        ["Liste arka planda güncellendi"] = "Playlist updated in the background",
+        ["Sırala ve filtrele"] = "Sort and filter",
+        ["SIRALAMA"] = "SORTING",
+        ["FİLTRE"] = "FILTER",
+        ["Liste sırası"] = "Playlist order",
+        ["Yeni eklenenler"] = "Recently added",
+        ["En çok izlenen"] = "Most watched",
+        ["Tümü"] = "All",
+        ["✚ Son Eklenenler"] = "✚ Recently Added",
+        ["SON EKLENENLER"] = "RECENTLY ADDED",
+        ["Son izlendi"] = "Last watched",
+        ["Eklendi"] = "Added",
+        ["İstatistikler"] = "Statistics",
+        ["İzleme süreleri yalnızca bu cihazda tutulur."] = "Watch times are kept on this device only.",
+        ["TOPLAM İZLEME"] = "TOTAL WATCHED",
+        ["İZLENEN İÇERİK"] = "ITEMS WATCHED",
+        ["AÇILIŞ SAYISI"] = "TIMES OPENED",
+        ["Türlere göre"] = "By type",
+        ["En çok izlenenler"] = "Most watched",
+        ["İstatistikleri sıfırla"] = "Reset statistics",
+        ["Henüz izleme kaydı yok."] = "No watch history yet.",
+        ["Listede yok"] = "Not in the playlist",
+        ["Grubu kilitle"] = "Lock group",
+        ["Ebeveyn kilidi"] = "Parental lock",
+        ["Bir gruba sağ tıklayıp kilitleyebilirsin. Kilitli gruplar PIN girilene kadar listede görünmez."] = "Right-click a group to lock it. Locked groups stay hidden until the PIN is entered.",
+        ["4-8 haneli PIN"] = "4-8 digit PIN",
+        ["PIN belirle"] = "Set PIN",
+        ["PIN\'i değiştir"] = "Change PIN",
+        ["Kilidi aç"] = "Unlock",
+        ["PIN\'i kaldır"] = "Remove PIN",
+        ["Kilitli grup yok."] = "No locked groups.",
+        ["Kilidi kaldır"] = "Remove lock",
+        ["Önce bir PIN belirleyin."] = "Set a PIN first.",
+        ["PIN 4-8 haneli sayı olmalı."] = "The PIN must be 4-8 digits.",
+        ["PIN kaydedildi."] = "PIN saved.",
+        ["PIN hatalı."] = "Wrong PIN.",
+        ["Kilit bu oturum için açıldı."] = "Unlocked for this session.",
+        ["PIN kaldırıldı, kilitler açıldı."] = "PIN removed, locks cleared.",
+        ["Koleksiyonlar"] = "Collections",
+        ["Koleksiyon"] = "Collection",
+        ["KOLEKSİYON"] = "COLLECTION",
+        ["Koleksiyona ekle"] = "Add to collection",
+        ["Koleksiyona eklendi"] = "Added to collection",
+        ["Yeni koleksiyon oluştur"] = "Create a new collection",
+        ["Yeni koleksiyon"] = "New collection",
+        ["Bir içeriğe sağ tıklayıp koleksiyona ekleyebilirsin; koleksiyonlar grup listesinde görünür."] = "Right-click an item to add it to a collection; collections appear in the group list.",
+        ["Henüz koleksiyon yok."] = "No collections yet.",
+        ["Sil"] = "Delete",
+        ["Görünüm"] = "Appearance",
+        ["Koyu"] = "Dark",
+        ["Açık"] = "Light",
+        ["Gündüz"] = "Daytime",
+        ["Varsayılan"] = "Default",
+        ["Mini oynatıcı"] = "Mini player",
+        ["Mini oynatıcıdan çık"] = "Leave mini player",
+        ["Detayları göster"] = "Show details",
+        ["İÇERİK BİLGİSİ"] = "TITLE INFO",
+        ["İçerik bilgisi (TMDB)"] = "Title info (TMDB)",
+        ["Film ve dizilerde afiş, puan ve özet göstermek için ücretsiz bir TMDB API anahtarı gerekir. Anahtar yalnızca bu cihazda saklanır."] = "A free TMDB API key is needed to show posters, ratings and summaries for movies and series. The key is stored on this device only.",
+        ["TMDB API anahtarı"] = "TMDB API key",
+        ["Kaydet"] = "Save",
+        ["Anahtar al"] = "Get a key",
+        ["Anahtar kaydedildi."] = "Key saved.",
+        ["Anahtar kaldırıldı."] = "Key removed.",
+        ["İçerik bilgisi için ayarlardan TMDB anahtarı girin."] = "Enter a TMDB key in settings to see title info.",
+        ["Bilgi alınıyor..."] = "Fetching info...",
+        ["Bu içerik için bilgi bulunamadı."] = "No info found for this title.",
         ["ilk"] = "first",
     };
 
@@ -236,48 +361,21 @@ public static class Localization
             .ToDictionary(group => group.Key, group => group.First().Key, StringComparer.Ordinal);
 
     private static readonly ConditionalWeakTable<Control, TextSnapshot> Applied = new();
-    private static readonly string PreferencesPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BgIptvPlayer", "preferences.json");
 
     public static string Language { get; private set; } = Turkish;
 
     public static event Action? LanguageChanged;
 
-    public static void Initialize()
-    {
-        try
-        {
-            if (!File.Exists(PreferencesPath)) return;
-            var preferences = JsonSerializer.Deserialize<AppPreferences>(File.ReadAllText(PreferencesPath));
-            if (preferences?.Language == English) Language = English;
-        }
-        catch
-        {
-            // Tercih dosyası okunamazsa varsayılan dil kullanılır.
-        }
-    }
+    public static void Initialize() => Language = Preferences.Current.Language == English ? English : Turkish;
 
     public static void SetLanguage(string language)
     {
         language = language == English ? English : Turkish;
         if (language == Language) return;
         Language = language;
-        Save();
+        Preferences.Current.Language = language;
+        Preferences.Save();
         LanguageChanged?.Invoke();
-    }
-
-    private static void Save()
-    {
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(PreferencesPath)!);
-            File.WriteAllText(PreferencesPath,
-                JsonSerializer.Serialize(new AppPreferences { Language = Language }, new JsonSerializerOptions { WriteIndented = true }));
-        }
-        catch
-        {
-            // Dil tercihi kaydedilemezse uygulama çalışmaya devam eder.
-        }
     }
 
     // Metni, hangi dilde yazılmış olursa olsun seçili dile çevirir.
@@ -336,10 +434,5 @@ public static class Localization
     {
         public string Text = "";
         public string Tip = "";
-    }
-
-    private sealed class AppPreferences
-    {
-        public string Language { get; set; } = Turkish;
     }
 }

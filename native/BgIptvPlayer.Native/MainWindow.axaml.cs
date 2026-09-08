@@ -20,6 +20,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
+using Avalonia.Styling;
 using Avalonia.Threading;
 using LibVLCSharp.Shared;
 
@@ -79,7 +80,13 @@ public partial class MainWindow : Window
     private Slider? _fullscreenTimeline;
     private TextBlock? _fullscreenTimeLabel;
     private TextBlock? _fullscreenNowPlaying;
-    private Slider? _fullscreenVolumeSlider;
+    private Border? _fullscreenVolumeFill;
+    private Avalonia.Controls.Shapes.Ellipse? _fullscreenVolumeThumb;
+    private TextBlock? _fullscreenVolumeText;
+    private TextBlock? _subtitleDelayText;
+    private StackPanel? _fullscreenTrackPanel;
+    private const double FullscreenVolumeTrackWidth = 104;
+    private const double FullscreenVolumeThumbSize = 13;
     private Avalonia.Controls.Shapes.Path? _fullscreenPlayPauseIcon;
     private Avalonia.Controls.Shapes.Path? _fullscreenVolumeWaveIcon;
     private Avalonia.Controls.Shapes.Path? _fullscreenVolumeMutedIcon;
@@ -101,18 +108,41 @@ public partial class MainWindow : Window
     private Button? _playerOverlayRewindButton;
     private Button? _playerOverlayForwardButton;
     private bool _syncingPlayerOverlayVolume;
-    private bool _syncingFullscreenVolume;
     private int _loadingDepth;
     private bool _isGlobalSearch;
     private string _settingsSection = "playlists";
+    private int _playbackRetryCount;
+    private bool _epgSearchAllChannels;
+    private bool _parentalUnlocked;
+    private string _selectedCollection = "";
+    private bool _isMiniPlayer;
+    private bool _keyboardBrowsing;
+    private PixelPoint _miniRestorePosition;
+    private Size _miniRestoreSize;
+    private WindowState _miniRestoreState;
+    private string? _pendingSubtitleFile;
+    private readonly DispatcherTimer _backgroundRefreshTimer;
+    private bool _isBackgroundRefreshing;
 
     public MainWindow()
     {
         Localization.Initialize();
         InitializeComponent();
+        ApplyTheme();
         UpdateHomeDashboard();
         Localization.LanguageChanged += ApplyLanguage;
         ApplyLanguage();
+        ApplyAccentColor();
+        UpdateSortMenu();
+        TmdbKeyBox.Text = Preferences.Current.TmdbApiKey ?? "";
+        RefreshParentalView();
+        RefreshCollectionsView();
+        ResumeLastChannelSwitch.IsChecked = Preferences.Current.ResumeLastChannel;
+        AutoNextEpisodeSwitch.IsChecked = Preferences.Current.AutoPlayNextEpisode;
+        BackgroundRefreshSwitch.IsChecked = Preferences.Current.BackgroundRefresh;
+        UpdatePlaybackOptionChips();
+        RefreshHiddenGroupsView();
+        if (TrackButton.Flyout is Flyout trackFlyout) trackFlyout.Opening += (_, _) => BuildTrackMenu(TrackFlyoutPanel);
         Timeline.AddHandler(PointerPressedEvent, Timeline_PointerPressed, RoutingStrategies.Tunnel, true);
         Timeline.AddHandler(PointerReleasedEvent, Timeline_PointerReleased, RoutingStrategies.Tunnel | RoutingStrategies.Bubble, true);
         Core.Initialize();
@@ -134,8 +164,16 @@ public partial class MainWindow : Window
             _fullscreenControlsRevealTimer.Stop();
             _fullscreenControlsRevealArmed = true;
         };
+        _backgroundRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromHours(6) };
+        _backgroundRefreshTimer.Tick += (_, _) => RefreshPlaylistInBackground();
+        _backgroundRefreshTimer.Start();
         _playbackProgressTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
-        _playbackProgressTimer.Tick += (_, _) => SaveCurrentPlaybackProgress();
+        _playbackProgressTimer.Tick += (_, _) =>
+        {
+            SaveCurrentPlaybackProgress();
+            AccumulateWatchTime();
+            UpdateMediaInfoBadge();
+        };
         _playbackProgressTimer.Start();
         _mediaPlayer.Opening += (_, _) => SetStatus(L("Yayına bağlanılıyor..."));
         _mediaPlayer.Buffering += (_, e) => SetStatus($"{L("Yükleniyor")} %{e.Cache:0}");
@@ -146,16 +184,20 @@ public partial class MainWindow : Window
                 : L("Oynatılıyor");
             UpdatePlayerOverlayText();
             UpdatePlayPauseIcons(true);
+            _playbackRetryCount = 0;
+            TrackButton.IsEnabled = true;
+            ApplyPendingSubtitleFile();
             if (!_historyRecordedForCurrentPlayback && _playingChannel is { } playingChannel)
             {
                 _historyRecordedForCurrentPlayback = true;
                 TouchPlaybackHistory(playingChannel);
             }
             TryResumePlayback(_mediaPlayer.Length);
+            UpdateMediaInfoBadge();
         });
         _mediaPlayer.Paused += (_, _) => Dispatcher.UIThread.Post(() => UpdatePlayPauseIcons(false));
         _mediaPlayer.Stopped += (_, _) => Dispatcher.UIThread.Post(() => UpdatePlayPauseIcons(false));
-        _mediaPlayer.EncounteredError += (_, _) => SetStatus(L("Yayın açılamadı; kaynak çevrimdışı olabilir."));
+        _mediaPlayer.EncounteredError += (_, _) => Dispatcher.UIThread.Post(HandlePlaybackError);
         _mediaPlayer.TimeChanged += (_, e) => UpdateTimeline(e.Time, _mediaPlayer.Length);
         _mediaPlayer.LengthChanged += (_, e) =>
         {
@@ -550,6 +592,8 @@ public partial class MainWindow : Window
         finally
         {
             EndLoading();
+            Catalog.Track(_channels);
+            TryResumeLastChannel();
         }
     }
 
@@ -1044,6 +1088,7 @@ public partial class MainWindow : Window
         var sectionChannels = _channels.Where(c => c.Kind == _selectedContent).ToList();
         var regularGroups = sectionChannels
             .GroupBy(c => c.Group)
+            .Where(g => !IsGroupHidden(g.Key) && !IsGroupLocked(g.Key))
             .Select(g => new ChannelGroup(g.Key, g.Count(), LibraryGroupKind.Regular))
             .OrderBy(g => ContainsAdult(g.Name) ? 1 : 0)
             .ThenBy(g => g.Name, StringComparer.CurrentCultureIgnoreCase)
@@ -1052,6 +1097,10 @@ public partial class MainWindow : Window
         var groups = new List<ChannelGroup>();
         var favoriteCount = GetLibraryChannels(LibraryGroupKind.Favorites, _selectedContent).Count;
         if (favoriteCount > 0) groups.Add(new ChannelGroup("★ Favoriler", favoriteCount, LibraryGroupKind.Favorites));
+
+        var addedChannels = GetLibraryChannels(LibraryGroupKind.RecentlyAdded, _selectedContent);
+        if (addedChannels.Count > 0)
+            groups.Add(new ChannelGroup(L("✚ Son Eklenenler"), addedChannels.Count, LibraryGroupKind.RecentlyAdded));
 
         var recentChannels = GetLibraryChannels(LibraryGroupKind.Recent, _selectedContent);
         if (recentChannels.Count > 0)
@@ -1062,6 +1111,13 @@ public partial class MainWindow : Window
             var continueWatchingChannels = GetLibraryChannels(LibraryGroupKind.ContinueWatching, _selectedContent);
             if (continueWatchingChannels.Count > 0)
                 groups.Add(new ChannelGroup(L("▶ İzlemeye Devam Et"), continueWatchingChannels.Count, LibraryGroupKind.ContinueWatching));
+        }
+
+        foreach (var name in Collections.Names)
+        {
+            var ids = Collections.Ids(name);
+            var count = sectionChannels.Count(ch => ids.Contains(ch.Id, StringComparer.Ordinal));
+            if (count > 0) groups.Add(new ChannelGroup($"◆ {name}", count, LibraryGroupKind.Collection, name));
         }
 
         groups.AddRange(regularGroups);
@@ -1080,6 +1136,35 @@ public partial class MainWindow : Window
         ApplyFilter();
     }
 
+    // Klavye ile gezerken secim degismesi oynatmayi baslatmaz; Enter gerekir.
+    private void ChannelList_KeyDown(object? sender, KeyEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case Key.Up:
+            case Key.Down:
+                _keyboardBrowsing = true;
+                Dispatcher.UIThread.Post(() => _keyboardBrowsing = false, DispatcherPriority.Background);
+                break;
+            case Key.Enter:
+                _keyboardBrowsing = false;
+                ChannelList_SelectionChanged(ChannelList, null!);
+                e.Handled = true;
+                break;
+            case Key.Left:
+                GroupList.Focus();
+                e.Handled = true;
+                break;
+        }
+    }
+
+    private void GroupList_KeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Right && e.Key != Key.Enter) return;
+        ChannelList.Focus();
+        e.Handled = true;
+    }
+
     private void GroupList_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         if (_suppressGroupSelection) return;
@@ -1088,6 +1173,7 @@ public partial class MainWindow : Window
         _isGlobalSearch = false;
         _selectedGroup = group.Name;
         _selectedGroupKind = group.Kind;
+        _selectedCollection = group.Key ?? "";
         ResetSeriesBrowser();
         PageTitle.Text = group.Name;
         ApplyFilter();
@@ -1209,6 +1295,7 @@ public partial class MainWindow : Window
 
     private void BeginLoading(string message)
     {
+        if (_isBackgroundRefreshing) return;
         _loadingDepth++;
         LoadingStatusText.Text = message;
         LoadingOverlay.IsVisible = true;
@@ -1216,6 +1303,7 @@ public partial class MainWindow : Window
 
     private void EndLoading()
     {
+        if (_isBackgroundRefreshing) return;
         _loadingDepth = Math.Max(0, _loadingDepth - 1);
         if (_loadingDepth == 0) LoadingOverlay.IsVisible = false;
     }
@@ -1272,9 +1360,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        var channels = _channels
-            .Where(c => c.Kind == _selectedContent && c.Group == _selectedGroup &&
-                        (query.Length == 0 || c.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase)))
+        var channels = SortAndFilter(_channels
+                .Where(c => c.Kind == _selectedContent && c.Group == _selectedGroup &&
+                            (query.Length == 0 || c.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase))))
             .ToList();
         ChannelList.ItemsSource = channels.Select(channel => MediaBrowserItem.FromChannel(channel, GetChannelSubtitle(channel))).ToList();
         BrowserTitle.Text = _selectedContent == ContentKind.Movie ? L("FİLMLER") : L("KANALLAR");
@@ -1284,8 +1372,9 @@ public partial class MainWindow : Window
 
     private void ApplyLibraryFilter(string query)
     {
-        var channels = GetLibraryChannels(_selectedGroupKind, _selectedContent)
-            .Where(c => query.Length == 0 || c.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase))
+        var channels = SortAndFilter(GetLibraryChannels(_selectedGroupKind, _selectedContent)
+                .Where(c => query.Length == 0 || c.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase)),
+                keepOrder: _selectedGroupKind is LibraryGroupKind.Recent or LibraryGroupKind.ContinueWatching or LibraryGroupKind.RecentlyAdded)
             .ToList();
 
         ChannelList.ItemsSource = channels.Select(channel =>
@@ -1296,7 +1385,8 @@ public partial class MainWindow : Window
                 : null;
             var subtitle = _selectedGroupKind switch
             {
-                LibraryGroupKind.Recent => $"Son izlendi · {FormatRelativeTime(state?.LastWatchedAt)}",
+                LibraryGroupKind.Recent => $"{L("Son izlendi")} · {FormatRelativeTime(state?.LastWatchedAt)}",
+                LibraryGroupKind.RecentlyAdded => $"{L("Eklendi")} · {FormatRelativeTime(Catalog.FirstSeen(channel.Id))}",
                 LibraryGroupKind.ContinueWatching => $"{L("Kaldığın yer")} · {FormatTime(state?.PositionMs ?? 0)}",
                 _ => channel.Group
             };
@@ -1311,6 +1401,8 @@ public partial class MainWindow : Window
         {
             LibraryGroupKind.Favorites => L("FAVORİLER"),
             LibraryGroupKind.Recent => L("SON İZLENENLER"),
+            LibraryGroupKind.RecentlyAdded => L("SON EKLENENLER"),
+            LibraryGroupKind.Collection => L("KOLEKSİYON"),
             _ => L("İZLEMEYE DEVAM ET")
         };
         SeriesBackButton.IsVisible = false;
@@ -1320,6 +1412,132 @@ public partial class MainWindow : Window
             ? "Listeyi Temizle"
             : "Geçmişi Temizle";
         ChannelCount.Text = $"{channels.Count:N0} {L("içerik")}";
+    }
+
+    // Siralama ve kalite filtresi tum listelerde ayni kurallarla uygulanir.
+    private IEnumerable<Channel> SortAndFilter(IEnumerable<Channel> channels, bool keepOrder = false)
+    {
+        channels = Preferences.Current.QualityFilter switch
+        {
+            "hd" => channels.Where(c => MatchesQuality(c.Name, ["HD", "FHD", "1080"])),
+            "4k" => channels.Where(c => MatchesQuality(c.Name, ["4K", "UHD", "2160"])),
+            "fav" => channels.Where(c => FindLibraryItem(c)?.IsFavorite == true),
+            _ => channels
+        };
+
+        if (keepOrder && Preferences.Current.SortMode == "default") return channels;
+
+        return Preferences.Current.SortMode switch
+        {
+            "az" => channels.OrderBy(c => c.Name, StringComparer.CurrentCultureIgnoreCase),
+            "za" => channels.OrderByDescending(c => c.Name, StringComparer.CurrentCultureIgnoreCase),
+            "new" => channels.OrderByDescending(c => Catalog.FirstSeen(c.Id) ?? DateTimeOffset.MinValue),
+            "watched" => channels.OrderByDescending(c => FindLibraryItem(c)?.WatchedSeconds ?? 0),
+            _ => channels
+        };
+    }
+
+    private static bool MatchesQuality(string name, string[] markers) =>
+        markers.Any(marker => name.Contains(marker, StringComparison.OrdinalIgnoreCase));
+
+    // Menu her acilisinda mevcut koleksiyonlarla doldurulur; secili olanlar isaretli gelir.
+    private void ChannelContextMenu_Opening(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        if (sender is not ContextMenu { DataContext: MediaBrowserItem { Channel: { } channel } } menu) return;
+
+        var addTo = menu.Items.OfType<MenuItem>().FirstOrDefault(item => item.Name == "AddToCollectionMenu");
+        if (addTo is null) return;
+
+        var entries = new List<MenuItem>();
+        foreach (var name in Collections.Names)
+        {
+            var inCollection = Collections.Contains(name, channel.Id);
+            var entry = new MenuItem { Header = inCollection ? $"✓ {name}" : name };
+            entry.Click += (_, _) =>
+            {
+                Collections.Toggle(name, channel.Id);
+                RefreshCollectionsView();
+                RefreshGroups(preserveSelection: true, resetSeriesBrowser: false);
+            };
+            entries.Add(entry);
+        }
+
+        addTo.ItemsSource = entries;
+        addTo.IsEnabled = entries.Count > 0;
+    }
+
+    private void CreateCollectionWithChannel_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { DataContext: MediaBrowserItem { Channel: { } channel } }) return;
+
+        var name = Collections.CreateUnique(L("Koleksiyon"));
+        Collections.Toggle(name, channel.Id);
+        RefreshCollectionsView();
+        RefreshGroups(preserveSelection: true, resetSeriesBrowser: false);
+        SetStatus($"{L("Koleksiyona eklendi")}: {name}");
+    }
+
+    private void CreateCollection_Click(object? sender, RoutedEventArgs e)
+    {
+        Collections.CreateUnique(L("Koleksiyon"));
+        RefreshCollectionsView();
+    }
+
+    private void DeleteCollection_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { CommandParameter: string name }) return;
+        Collections.Delete(name);
+        RefreshCollectionsView();
+        if (_channels.Count > 0) RefreshGroups(preserveSelection: true, resetSeriesBrowser: false);
+    }
+
+    private void RenameCollection_LostFocus(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not TextBox { Tag: string oldName } box) return;
+        var newName = box.Text?.Trim() ?? "";
+        if (newName == oldName) return;
+        if (!Collections.Rename(oldName, newName)) box.Text = oldName;
+
+        RefreshCollectionsView();
+        if (_channels.Count > 0) RefreshGroups(preserveSelection: true, resetSeriesBrowser: false);
+    }
+
+    private void RefreshCollectionsView()
+    {
+        var items = Collections.Names
+            .Select(name => new CollectionItem(name, Collections.Ids(name).Count))
+            .ToList();
+        CollectionsList.ItemsSource = items;
+        NoCollectionsText.IsVisible = items.Count == 0;
+    }
+
+    private void SetSortMode_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string mode }) return;
+        Preferences.Current.SortMode = mode;
+        Preferences.Save();
+        UpdateSortMenu();
+        ApplyFilter();
+    }
+
+    private void SetQualityFilter_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string filter }) return;
+        Preferences.Current.QualityFilter = filter;
+        Preferences.Save();
+        UpdateSortMenu();
+        ApplyFilter();
+    }
+
+    private void UpdateSortMenu()
+    {
+        foreach (var option in SortModeList.Children.OfType<Button>())
+            option.Classes.Set("active", option.Tag as string == Preferences.Current.SortMode);
+        foreach (var chip in QualityFilterChips.Children.OfType<Button>())
+            chip.Classes.Set("active", (chip.Tag as string ?? "") == Preferences.Current.QualityFilter);
+
+        var filtered = Preferences.Current.SortMode != "default" || Preferences.Current.QualityFilter.Length > 0;
+        SortButton.Classes.Set("active", filtered);
     }
 
     private static bool ContainsAdult(string value) =>
@@ -1430,11 +1648,38 @@ public partial class MainWindow : Window
         }
 
         if (item.Channel is not { } channel) return;
+        if (_keyboardBrowsing) return;
         PlayChannel(channel);
     }
 
-    private void PlayChannel(Channel channel)
+    // Kaynak ilk denemede acilmazsa kisa araliklarla iki kez daha denenir;
+    // gecici ag hatalarinda kullanicinin elle yeniden tiklamasi gerekmez.
+    private void HandlePlaybackError()
     {
+        if (_playingChannel is not { } channel)
+        {
+            SetStatus(L("Yayın açılamadı; kaynak çevrimdışı olabilir."));
+            return;
+        }
+
+        AppLog.Write($"Yayın açılamadı: {channel.Name} ({channel.Url})");
+        if (_playbackRetryCount >= 2)
+        {
+            SetStatus(L("Yayın açılamadı; kaynak çevrimdışı olabilir."));
+            return;
+        }
+
+        _playbackRetryCount++;
+        SetStatus($"{L("Yayın açılamadı, yeniden deneniyor")} ({_playbackRetryCount}/2)");
+        DispatcherTimer.RunOnce(() =>
+        {
+            if (_playingChannel == channel) PlayChannel(channel, isRetry: true);
+        }, TimeSpan.FromSeconds(2));
+    }
+
+    private void PlayChannel(Channel channel, bool isRetry = false)
+    {
+        if (!isRetry) _playbackRetryCount = 0;
         SaveCurrentPlaybackProgress();
         if (_playingChannel is { } current && !string.Equals(current.Url, channel.Url, StringComparison.OrdinalIgnoreCase))
             _lastPlayingChannel = current;
@@ -1445,13 +1690,20 @@ public partial class MainWindow : Window
         _media = new Media(_libVlc, new Uri(channel.Url));
         _media.AddOption(":network-caching=1800");
         _media.AddOption(":http-reconnect");
+        _media.AddOption($":freetype-rel-fontsize={Preferences.Current.SubtitleFontSize}");
         NowPlaying.Text = channel.Name;
+        MediaInfoBadge.IsVisible = false;
         NowPlayingLogo.LogoUrl = channel.LogoUrl;
         NowPlayingLogo.Initials = channel.Initials;
         NowPlayingLogo.IsVisible = true;
         PlaybackKindBadge.Text = channel.Badge;
         _playingContent = channel.Kind;
         _playingChannel = channel;
+        if (Preferences.Current.LastChannelId != channel.Id)
+        {
+            Preferences.Current.LastChannelId = channel.Id;
+            Preferences.Save();
+        }
         _selectedEpgDate = DateTime.Today;
         // EPG verisini hazırla, ancak oynatma alanını kullanıcı istemeden daraltma.
         UpdateEpgPanel(channel, false);
@@ -1460,15 +1712,18 @@ public partial class MainWindow : Window
         UpdateFavoriteButton();
         PlaybackStatus.Text = L("Yayına bağlanılıyor...");
         PlayPauseButton.IsEnabled = true;
+        TrackButton.IsEnabled = false;
         UpdateChannelNavigationButtons();
         PlayPauseIcon.Data = Avalonia.Media.Geometry.Parse("M3,2 L7,2 L7,18 L3,18 Z M13,2 L17,2 L17,18 L13,18 Z");
         Timeline.Value = 0;
         Timeline.IsEnabled = false;
         UpdateSeekControls(false);
         TimelinePanel.IsVisible = false;
-        if (!_isPlayerFullscreen) PlayerLayout.RowDefinitions = new RowDefinitions("*,104");
+        if (!_isPlayerFullscreen) PlayerLayout.RowDefinitions = new RowDefinitions("*,Auto");
         TimeLabel.Text = "CANLI";
         _mediaPlayer.Play(_media);
+        _mediaPlayer.SetRate((float)Preferences.Current.PlaybackRate);
+        _mediaPlayer.AspectRatio = Preferences.Current.AspectRatio.Length == 0 ? null : Preferences.Current.AspectRatio;
         Dispatcher.UIThread.Post(ShowPlayerOverlay);
     }
 
@@ -1491,6 +1746,7 @@ public partial class MainWindow : Window
         NowPlaying.Text = L("İzlemek için bir kanal seçin");
         NowPlayingLogo.IsVisible = false;
         NowPlayingLogo.LogoUrl = null;
+        MediaInfoBadge.IsVisible = false;
         PlaybackStatus.Text = L("Hazır");
         PlaybackKindBadge.Text = "HAZIR";
         PlayPauseButton.IsEnabled = false;
@@ -1516,11 +1772,91 @@ public partial class MainWindow : Window
         else UpdateEpgPanel(channel, true);
     }
 
+    // TMDB paneli EPG paneliyle ayni sutunu paylasir; ayni anda biri gorunur.
+    private async void ShowDetails_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { DataContext: MediaBrowserItem item }) return;
+
+        var channel = item.Channel;
+        var title = channel?.Kind == ContentKind.Series && !string.IsNullOrWhiteSpace(channel.Series.Title)
+            ? channel.Series.Title
+            : item.Name;
+        var isSeries = channel?.Kind == ContentKind.Series || item.Kind != MediaBrowserItemKind.Channel;
+
+        EpgPanel.IsVisible = false;
+        DetailsPanel.IsVisible = true;
+        PlayerSurfaceLayout.ColumnDefinitions = new ColumnDefinitions("*,330");
+        Dispatcher.UIThread.Post(UpdatePlayerOverlayBounds);
+
+        DetailsTitle.Text = Tmdb.CleanTitle(title);
+        DetailsOverview.Text = "";
+        DetailsPoster.Source = null;
+        DetailsRatingBadge.IsVisible = false;
+        DetailsYearBadge.IsVisible = false;
+
+        if (!Tmdb.IsConfigured)
+        {
+            DetailsStatus.Text = L("İçerik bilgisi için ayarlardan TMDB anahtarı girin.");
+            return;
+        }
+
+        DetailsStatus.Text = L("Bilgi alınıyor...");
+        var details = await Tmdb.SearchAsync(title, isSeries);
+        if (details is null)
+        {
+            DetailsStatus.Text = L("Bu içerik için bilgi bulunamadı.");
+            return;
+        }
+
+        DetailsStatus.Text = "";
+        DetailsTitle.Text = details.Title;
+        DetailsOverview.Text = details.Overview ?? "";
+        DetailsRating.Text = Tmdb.FormatRating(details.Rating);
+        DetailsRatingBadge.IsVisible = DetailsRating.Text.Length > 0;
+        DetailsYear.Text = details.Year ?? "";
+        DetailsYearBadge.IsVisible = DetailsYear.Text.Length > 0;
+        if (details.PosterUrl is { Length: > 0 } poster) DetailsPoster.Source = await LoadPosterAsync(poster);
+    }
+
+    private static async Task<Avalonia.Media.Imaging.Bitmap?> LoadPosterAsync(string url)
+    {
+        try
+        {
+            var bytes = await PlaylistClient.GetByteArrayAsync(url);
+            return new Avalonia.Media.Imaging.Bitmap(new MemoryStream(bytes));
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write("Afiş indirilemedi", ex);
+            return null;
+        }
+    }
+
+    private void CloseDetails_Click(object? sender, RoutedEventArgs e)
+    {
+        DetailsPanel.IsVisible = false;
+        PlayerSurfaceLayout.ColumnDefinitions = new ColumnDefinitions("*,0");
+        Dispatcher.UIThread.Post(UpdatePlayerOverlayBounds);
+    }
+
+    private void SaveTmdbKey_Click(object? sender, RoutedEventArgs e)
+    {
+        var key = TmdbKeyBox.Text?.Trim() ?? "";
+        Preferences.Current.TmdbApiKey = key.Length == 0 ? null : key;
+        Preferences.Save();
+        TmdbStatusText.Text = key.Length == 0 ? L("Anahtar kaldırıldı.") : L("Anahtar kaydedildi.");
+        TmdbStatusText.IsVisible = true;
+    }
+
+    private void OpenTmdbSite_Click(object? sender, RoutedEventArgs e) =>
+        OpenExternalUrl("https://www.themoviedb.org/settings/api");
+
     private void CloseEpgPanel_Click(object? sender, RoutedEventArgs e) => SetEpgPanelVisibility(false);
 
     private void SetEpgPanelVisibility(bool visible)
     {
         var shouldShow = visible && !_isPlayerFullscreen;
+        if (shouldShow) DetailsPanel.IsVisible = false;
         EpgPanel.IsVisible = shouldShow;
         PlayerSurfaceLayout.ColumnDefinitions = shouldShow
             ? new ColumnDefinitions("*,310")
@@ -1546,6 +1882,13 @@ public partial class MainWindow : Window
 
     private void RefreshEpgProgrammeList(Channel? channel = null)
     {
+        var searchQuery = EpgSearchBox.Text?.Trim() ?? "";
+        if (_epgSearchAllChannels && searchQuery.Length >= 2)
+        {
+            ShowEpgSearchResults(searchQuery);
+            return;
+        }
+
         channel ??= _playingChannel;
         if (channel is not { Kind: ContentKind.Live }) return;
 
@@ -1573,6 +1916,57 @@ public partial class MainWindow : Window
     }
 
     private void EpgSearchBox_TextChanged(object? sender, TextChangedEventArgs e) => RefreshEpgProgrammeList();
+
+    private void SetEpgSearchScope_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string scope }) return;
+        var all = scope == "all";
+        if (_epgSearchAllChannels == all) return;
+
+        _epgSearchAllChannels = all;
+        EpgScopeChannelButton.Classes.Set("active", !all);
+        EpgScopeAllButton.Classes.Set("active", all);
+        RefreshEpgProgrammeList();
+    }
+
+    // Tum kanallarda arama: yayin akisi olan her kanalin programlari taranir,
+    // sonuc listesinde kanal adi da gorunur ve tiklayinca o kanala gecilir.
+    private void ShowEpgSearchResults(string query)
+    {
+        var now = DateTimeOffset.Now;
+        var results = new List<EpgProgrammeItem>();
+        foreach (var channel in _channels.Where(ch => ch.Kind == ContentKind.Live))
+        {
+            var schedule = FindEpgSchedule(channel);
+            if (schedule is null) continue;
+
+            foreach (var programme in schedule.Programs)
+            {
+                if (programme.Stop < now) continue;
+                if (!programme.Title.Contains(query, StringComparison.CurrentCultureIgnoreCase)) continue;
+
+                results.Add(new EpgProgrammeItem(programme, now, channel, showDate: true));
+                if (results.Count >= 300) break;
+            }
+
+            if (results.Count >= 300) break;
+        }
+
+        EpgDateText.Text = $"{results.Count:N0} {L("sonuç")}";
+        EpgPreviousDayButton.IsEnabled = false;
+        EpgNextDayButton.IsEnabled = false;
+        EpgProgrammeList.ItemsSource = results;
+        EpgProgrammeList.IsVisible = results.Count > 0;
+        EpgEmptyText.IsVisible = results.Count == 0;
+        EpgEmptyText.Text = L("Aramanızla eşleşen program bulunamadı.");
+    }
+
+    private void EpgProgrammeList_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (EpgProgrammeList.SelectedItem is not EpgProgrammeItem { Channel: { } channel }) return;
+        EpgProgrammeList.SelectedIndex = -1;
+        PlayChannel(channel);
+    }
 
     private void EpgPreviousDay_Click(object? sender, RoutedEventArgs e)
     {
@@ -1746,6 +2140,11 @@ public partial class MainWindow : Window
             ? "M3,2 L7,2 L7,18 L3,18 Z M13,2 L17,2 L17,18 L13,18 Z"
             : "M4,2 L18,10 L4,18 Z");
         PlayPauseIcon.Data = geometry;
+        PlayPauseIcon.Margin = isPlaying ? default : new Avalonia.Thickness(3, 0, 0, 0);
+        if (_fullscreenPlayPauseIcon is not null)
+            _fullscreenPlayPauseIcon.Margin = isPlaying ? default : new Avalonia.Thickness(3, 0, 0, 0);
+        if (_playerOverlayPlayPauseIcon is not null)
+            _playerOverlayPlayPauseIcon.Margin = isPlaying ? default : new Avalonia.Thickness(3, 0, 0, 0);
         if (_fullscreenPlayPauseIcon is not null)
             _fullscreenPlayPauseIcon.Data = geometry;
         if (_playerOverlayPlayPauseIcon is not null)
@@ -1761,13 +2160,7 @@ public partial class MainWindow : Window
         if (VolumeMutedIcon is not null) VolumeMutedIcon.IsVisible = e.NewValue <= 0;
         if (_fullscreenVolumeWaveIcon is not null) _fullscreenVolumeWaveIcon.IsVisible = e.NewValue > 0;
         if (_fullscreenVolumeMutedIcon is not null) _fullscreenVolumeMutedIcon.IsVisible = e.NewValue <= 0;
-        if (_fullscreenVolumeSlider is not null && !_syncingFullscreenVolume &&
-            Math.Abs(_fullscreenVolumeSlider.Value - e.NewValue) > 0.01)
-        {
-            _syncingFullscreenVolume = true;
-            _fullscreenVolumeSlider.Value = e.NewValue;
-            _syncingFullscreenVolume = false;
-        }
+        UpdateFullscreenVolumeBar(e.NewValue);
         if (_playerOverlayVolumeSlider is not null && !_syncingPlayerOverlayVolume &&
             Math.Abs(_playerOverlayVolumeSlider.Value - e.NewValue) > 0.01)
         {
@@ -1838,7 +2231,7 @@ public partial class MainWindow : Window
             if (_fullscreenTimelinePanel is not null) _fullscreenTimelinePanel.IsVisible = false;
             if (_fullscreenTimeline is not null) _fullscreenTimeline.IsEnabled = false;
             if (_playerOverlayTimeline is not null) _playerOverlayTimeline.IsVisible = false;
-            if (!_isPlayerFullscreen && _playerOverlay?.IsVisible != true) PlayerLayout.RowDefinitions = new RowDefinitions("*,104");
+            if (!_isPlayerFullscreen && _playerOverlay?.IsVisible != true) PlayerLayout.RowDefinitions = new RowDefinitions("*,Auto");
             TimeLabel.Text = "CANLI";
             if (_fullscreenTimeLabel is not null) _fullscreenTimeLabel.Text = "CANLI";
             if (_playerOverlayTimeLabel is not null) _playerOverlayTimeLabel.Text = "CANLI";
@@ -1847,7 +2240,7 @@ public partial class MainWindow : Window
 
         TimelinePanel.IsVisible = true;
         if (_fullscreenTimelinePanel is not null) _fullscreenTimelinePanel.IsVisible = true;
-        if (!_isPlayerFullscreen && _playerOverlay?.IsVisible != true) PlayerLayout.RowDefinitions = new RowDefinitions("*,124");
+        if (!_isPlayerFullscreen && _playerOverlay?.IsVisible != true) PlayerLayout.RowDefinitions = new RowDefinitions("*,Auto");
         Timeline.Maximum = length;
         Timeline.IsEnabled = _mediaPlayer.IsSeekable;
         if (_fullscreenTimeline is not null)
@@ -1898,6 +2291,13 @@ public partial class MainWindow : Window
             LibraryGroupKind.ContinueWatching => channels
                 .Where(c => IsResumeCandidate(FindLibraryItem(c)))
                 .OrderByDescending(c => FindLibraryItem(c)!.LastWatchedAt),
+            LibraryGroupKind.RecentlyAdded => channels
+                .Where(c => Catalog.IsRecentlyAdded(c.Id))
+                .OrderByDescending(c => Catalog.FirstSeen(c.Id))
+                .Take(200),
+            LibraryGroupKind.Collection => channels
+                .Where(c => Collections.Contains(_selectedCollection, c.Id))
+                .OrderBy(c => c.Name, StringComparer.CurrentCultureIgnoreCase),
             _ => []
         };
         return channels.ToList();
@@ -1908,6 +2308,7 @@ public partial class MainWindow : Window
         var state = GetOrCreateLibraryItem(channel);
         state.Kind = channel.Kind;
         state.LastWatchedAt = DateTimeOffset.UtcNow;
+        state.PlayCount++;
 
         if (channel.Kind == ContentKind.Live)
         {
@@ -1982,6 +2383,7 @@ public partial class MainWindow : Window
     private void MarkCurrentPlaybackCompleted()
     {
         if (_playingChannel is not { Kind: not ContentKind.Live } channel) return;
+        var finished = channel;
         var state = FindLibraryItem(channel);
         if (state is null) return;
         state.PositionMs = 0;
@@ -1990,6 +2392,70 @@ public partial class MainWindow : Window
         CleanupLibraryItem(channel.Id, state);
         SaveLibraryState();
         RefreshGroups(preserveSelection: true, resetSeriesBrowser: false);
+        TryPlayNextEpisode(finished);
+    }
+
+    // Bolum bitince ayni dizinin sonraki bolumu sezon ve bolum sirasina gore bulunur.
+    private void TryPlayNextEpisode(Channel finished)
+    {
+        if (!Preferences.Current.AutoPlayNextEpisode) return;
+        if (finished.Kind != ContentKind.Series || string.IsNullOrWhiteSpace(finished.Series.Title)) return;
+
+        var current = (finished.Series.Season ?? 0, finished.Series.Episode ?? 0);
+        var next = _channels
+            .Where(ch => ch.Kind == ContentKind.Series &&
+                         string.Equals(ch.Series.Title, finished.Series.Title, StringComparison.CurrentCultureIgnoreCase))
+            .Select(ch => (Channel: ch, Key: (ch.Series.Season ?? 0, ch.Series.Episode ?? 0)))
+            .Where(x => x.Key.CompareTo(current) > 0)
+            .OrderBy(x => x.Key.Item1)
+            .ThenBy(x => x.Key.Item2)
+            .Select(x => x.Channel)
+            .FirstOrDefault();
+
+        if (next is null) return;
+
+        SetStatus($"{L("Sonraki bölüm")}: {next.Name}");
+        PlayChannel(next);
+    }
+
+    // Uzak listeler acilisi bekletmeden, arka planda sessizce tazelenir.
+    private async void RefreshPlaylistInBackground()
+    {
+        if (!Preferences.Current.BackgroundRefresh || _isBackgroundRefreshing || _loadingDepth > 0) return;
+        if (_playlists.FirstOrDefault(entry => entry.IsActive) is not { IsRemote: true } active) return;
+
+        _isBackgroundRefreshing = true;
+        try
+        {
+            await LoadPlaylistEntryAsync(active, forceRefresh: true);
+            SetStatus($"{L("Liste arka planda güncellendi")} · {_channels.Count:N0} {L("içerik")}");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write("Arka plan yenilemesi başarısız", ex);
+        }
+        finally
+        {
+            _isBackgroundRefreshing = false;
+        }
+    }
+
+    private void AutoNextEpisode_Changed(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleSwitch toggle) return;
+        var enabled = toggle.IsChecked == true;
+        if (Preferences.Current.AutoPlayNextEpisode == enabled) return;
+        Preferences.Current.AutoPlayNextEpisode = enabled;
+        Preferences.Save();
+    }
+
+    private void BackgroundRefresh_Changed(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleSwitch toggle) return;
+        var enabled = toggle.IsChecked == true;
+        if (Preferences.Current.BackgroundRefresh == enabled) return;
+        Preferences.Current.BackgroundRefresh = enabled;
+        Preferences.Save();
     }
 
     private void CleanupLibraryItem(string id, LibraryItemState state)
@@ -2082,19 +2548,19 @@ public partial class MainWindow : Window
         Grid.SetColumn(_playerOverlayTimeLabel, 1);
         timelineRow.Children.Add(_playerOverlayTimeLabel);
 
-        _playerOverlayPreviousButton = CreatePlayerOverlayButton(CreateFullscreenIcon("M5,4 L8,4 L8,20 L5,20 Z M19,4 L10,12 L19,20 Z"));
+        _playerOverlayPreviousButton = CreatePlayerOverlayButton(CreateFullscreenIcon("M6,5 L6,19 M19,5 L9,12 L19,19 Z", 19, 1.8));
         _playerOverlayPreviousButton.Click += PreviousChannel_Click;
-        _playerOverlayLastButton = CreatePlayerOverlayButton(CreatePlayerOverlayStrokeIcon("M4,4 L4,9 L9,9 M5.5,7 A8,8 0 1 1 4.8,15"));
+        _playerOverlayLastButton = CreatePlayerOverlayButton(CreateFullscreenIcon("M4,4 L4,9 L9,9 M5.5,7 A8,8 0 1 1 4.8,15", 19));
         _playerOverlayLastButton.Click += LastChannel_Click;
-        _playerOverlayNextButton = CreatePlayerOverlayButton(CreateFullscreenIcon("M16,4 L19,4 L19,20 L16,20 Z M5,4 L14,12 L5,20 Z"));
+        _playerOverlayNextButton = CreatePlayerOverlayButton(CreateFullscreenIcon("M18,5 L18,19 M5,5 L15,12 L5,19 Z", 19, 1.8));
         _playerOverlayNextButton.Click += NextChannel_Click;
         _playerOverlayRewindButton = CreatePlayerOverlayButton(CreateFullscreenSeekIcon("10", true));
         _playerOverlayRewindButton.Click += Rewind_Click;
         _playerOverlayForwardButton = CreatePlayerOverlayButton(CreateFullscreenSeekIcon("10", false));
         _playerOverlayForwardButton.Click += Forward_Click;
-        var epgButton = CreatePlayerOverlayButton(CreatePlayerOverlayStrokeIcon("M4,5 L20,5 L20,20 L4,20 Z M8,2 L8,7 M16,2 L16,7 M4,10 L20,10 M8,14 L10,14 M14,14 L16,14 M8,17 L10,17 M14,17 L16,17"));
+        var epgButton = CreatePlayerOverlayButton(CreateFullscreenIcon("M4,5 L20,5 L20,20 L4,20 Z M8,2 L8,7 M16,2 L16,7 M4,10 L20,10 M8,14 L10,14 M14,14 L16,14 M8,17 L10,17 M14,17 L16,17", 19));
         epgButton.Click += ToggleEpgPanel_Click;
-        var favoriteButton = CreatePlayerOverlayButton(CreatePlayerOverlayStrokeIcon("M12,2.5 L14.9,8.4 L21.4,9.3 L16.7,13.9 L17.8,20.4 L12,17.3 L6.2,20.4 L7.3,13.9 L2.6,9.3 L9.1,8.4 Z"));
+        var favoriteButton = CreatePlayerOverlayButton(CreateFullscreenIcon("M12,2.5 L14.9,8.4 L21.4,9.3 L16.7,13.9 L17.8,20.4 L12,17.3 L6.2,20.4 L7.3,13.9 L2.6,9.3 L9.1,8.4 Z", 19));
         favoriteButton.Click += FavoriteButton_Click;
         var volumeButton = CreatePlayerOverlayButton(CreatePlayerOverlayVolumeIcon());
         volumeButton.Click += VolumeButton_Click;
@@ -2111,11 +2577,10 @@ public partial class MainWindow : Window
             if (_syncingPlayerOverlayVolume) return;
             VolumeSlider.Value = e.NewValue;
         };
-        _playerOverlayPlayPauseIcon = CreateFullscreenIcon("M3,2 L7,2 L7,18 L3,18 Z M13,2 L17,2 L17,18 L13,18 Z");
-        _playerOverlayPlayPauseIcon.Fill = new SolidColorBrush(Color.Parse("#0F1114"));
+        _playerOverlayPlayPauseIcon = CreatePlayPauseIcon();
         var playPauseButton = CreatePlayerOverlayButton(_playerOverlayPlayPauseIcon, primary: true);
         playPauseButton.Click += PlayPause_Click;
-        var fullscreenButton = CreatePlayerOverlayButton(CreatePlayerOverlayStrokeIcon("M4,9 L4,4 L9,4 M15,4 L20,4 L20,9 M20,15 L20,20 L15,20 M9,20 L4,20 L4,15"));
+        var fullscreenButton = CreatePlayerOverlayButton(CreateFullscreenIcon("M4,9 L4,4 L9,4 M15,4 L20,4 L20,9 M20,15 L20,20 L15,20 M9,20 L4,20 L4,15", 19));
         fullscreenButton.Click += Fullscreen_Click;
 
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5, VerticalAlignment = VerticalAlignment.Center };
@@ -2194,35 +2659,27 @@ public partial class MainWindow : Window
         VerticalContentAlignment = VerticalAlignment.Center
     };
 
-    private static Avalonia.Controls.Shapes.Path CreatePlayerOverlayStrokeIcon(string data) => new()
-    {
-        Data = Avalonia.Media.Geometry.Parse(data),
-        Stroke = Brushes.White,
-        StrokeThickness = 1.7,
-        StrokeLineCap = PenLineCap.Round,
-        Fill = null,
-        Width = 19,
-        Height = 19,
-        Stretch = Stretch.Uniform
-    };
-
-    private static Viewbox CreatePlayerOverlayVolumeIcon()
+    private static Control CreatePlayerOverlayVolumeIcon()
     {
         var canvas = new Canvas { Width = 24, Height = 24 };
         canvas.Children.Add(new Avalonia.Controls.Shapes.Path
         {
-            Data = Avalonia.Media.Geometry.Parse("M3,9 L7,9 L12,5 L12,19 L7,15 L3,15 Z"),
-            Fill = Brushes.White
+            Data = Avalonia.Media.Geometry.Parse("M3,9 L7,9 L12,5 L12,17 L7,13 L3,13 Z"),
+            Stroke = new SolidColorBrush(Color.Parse("#F2F4F7")),
+            StrokeThickness = 1.7,
+            StrokeJoin = PenLineJoin.Round,
+            StrokeLineCap = PenLineCap.Round,
+            Fill = Brushes.Transparent
         });
         canvas.Children.Add(new Avalonia.Controls.Shapes.Path
         {
-            Data = Avalonia.Media.Geometry.Parse("M15,8.5 C16.3,9.4 17,10.6 17,12 C17,13.4 16.3,14.6 15,15.5 M18,5.5 C20,7.2 21,9.4 21,12 C21,14.6 20,16.8 18,18.5"),
-            Stroke = Brushes.White,
+            Data = Avalonia.Media.Geometry.Parse("M15,8 C17,10 17,12 15,14 M18,5 C22,9 22,13 18,17"),
+            Stroke = new SolidColorBrush(Color.Parse("#F2F4F7")),
             StrokeThickness = 1.7,
             StrokeLineCap = PenLineCap.Round,
             Fill = null
         });
-        return new Viewbox { Width = 21, Height = 21, Child = canvas };
+        return new Viewbox { Width = 20, Height = 20, Child = canvas };
     }
 
     private void ShowPlayerOverlay()
@@ -2234,9 +2691,7 @@ public partial class MainWindow : Window
         // the separate overlay remains exclusive to true fullscreen mode.
         _playerOverlay?.Hide();
         PlayerControls.IsVisible = true;
-        PlayerLayout.RowDefinitions = TimelinePanel.IsVisible
-            ? new RowDefinitions("*,124")
-            : new RowDefinitions("*,104");
+        PlayerLayout.RowDefinitions = new RowDefinitions("*,Auto");
     }
 
     private void HidePlayerOverlay(bool restoreControls = false)
@@ -2244,7 +2699,7 @@ public partial class MainWindow : Window
         _playerOverlay?.Hide();
         if (!restoreControls) return;
         PlayerControls.IsVisible = true;
-        PlayerLayout.RowDefinitions = TimelinePanel.IsVisible ? new RowDefinitions("*,124") : new RowDefinitions("*,104");
+        PlayerLayout.RowDefinitions = new RowDefinitions("*,Auto");
     }
 
     private void UpdatePlayerOverlayText()
@@ -2270,6 +2725,13 @@ public partial class MainWindow : Window
 
     private void HandlePlayerShortcut(KeyEventArgs e)
     {
+        if (e.Key == Key.Escape && _isMiniPlayer)
+        {
+            ExitMiniPlayer();
+            e.Handled = true;
+            return;
+        }
+
         if (e.Key == Key.Escape && _isPlayerFullscreen)
         {
             SetPlayerFullscreen(false);
@@ -2277,6 +2739,8 @@ public partial class MainWindow : Window
             return;
         }
         if (e.Source is TextBox) return;
+        if (e.Source is Control source && IsInsideList(source) &&
+            e.Key is Key.Up or Key.Down or Key.Left or Key.Right or Key.Enter) return;
         switch (e.Key)
         {
             case Key.PageUp:
@@ -2311,7 +2775,31 @@ public partial class MainWindow : Window
                 SetPlayerFullscreen(!_isPlayerFullscreen);
                 e.Handled = true;
                 break;
+            case Key.Up:
+                VolumeSlider.Value = Math.Clamp(VolumeSlider.Value + 5, 0, 100);
+                e.Handled = true;
+                break;
+            case Key.Down:
+                VolumeSlider.Value = Math.Clamp(VolumeSlider.Value - 5, 0, 100);
+                e.Handled = true;
+                break;
+            case Key.S:
+                TakeSnapshot_Click(null, new RoutedEventArgs());
+                e.Handled = true;
+                break;
+            case Key.P:
+                ToggleMiniPlayer_Click(null, new RoutedEventArgs());
+                e.Handled = true;
+                break;
         }
+    }
+
+    // Liste icindeki ok tuslari ve Enter listeye ait kalir; ses ve sarma kisayollari devreye girmez.
+    private static bool IsInsideList(StyledElement? element)
+    {
+        for (var node = element; node is not null; node = node.Parent)
+            if (node is ListBox) return true;
+        return false;
     }
 
     private void Window_PointerMoved(object? sender, PointerEventArgs e) => HandleFullscreenPointerActivity();
@@ -2336,7 +2824,7 @@ public partial class MainWindow : Window
         _fullscreenControlsVisible = true;
         _fullscreenControlsRevealArmed = false;
         if (_fullscreenNowPlaying is not null) _fullscreenNowPlaying.Text = NowPlaying.Text;
-        if (_fullscreenVolumeSlider is not null) _fullscreenVolumeSlider.Value = VolumeSlider.Value;
+        UpdateFullscreenVolumeBar(VolumeSlider.Value);
         UpdatePlayPauseIcons(_mediaPlayer.IsPlaying);
         UpdateFullscreenControlsOverlayBounds();
         _fullscreenControlsOverlay.Show(this);
@@ -2389,38 +2877,46 @@ public partial class MainWindow : Window
         };
 
         var volumeButton = CreateFullscreenVolumeButton();
-        volumeButton.Click += (_, _) =>
+        volumeButton.Click += VolumeButton_Click;
+        _fullscreenVolumeText = new TextBlock
         {
-            if (_fullscreenVolumeSlider is null) return;
-            _fullscreenVolumeSlider.Value = _fullscreenVolumeSlider.Value > 0 ? 0 : Math.Max(1, _lastAudibleVolume);
-        };
-        _fullscreenVolumeSlider = new Slider
-        {
-            Minimum = 0,
-            Maximum = 100,
-            Value = VolumeSlider.Value,
-            Width = 110,
+            Text = VolumeValueText.Text,
+            FontSize = 11,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = new SolidColorBrush(Color.Parse("#A3ABB8")),
+            Width = 32,
+            TextAlignment = TextAlignment.Right,
             VerticalAlignment = VerticalAlignment.Center
         };
-        _fullscreenVolumeSlider.ValueChanged += (_, e) =>
+        var volumeRow = new StackPanel
         {
-            if (_syncingFullscreenVolume) return;
-            VolumeSlider.Value = e.NewValue;
+            Orientation = Orientation.Horizontal,
+            Spacing = 11,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        volumeRow.Children.Add(CreateFullscreenVolumeBar());
+        volumeRow.Children.Add(_fullscreenVolumeText);
+        var volumeGroove = new Border
+        {
+            CornerRadius = new Avalonia.CornerRadius(100),
+            Background = new SolidColorBrush(Color.Parse("#14171B")),
+            BorderBrush = new SolidColorBrush(Color.Parse("#262B33")),
+            BorderThickness = new Avalonia.Thickness(1),
+            Height = 34,
+            Padding = new Avalonia.Thickness(14, 0),
+            Margin = new Avalonia.Thickness(3, 0, 3, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = volumeRow
         };
 
-        _fullscreenPlayPauseIcon = CreateFullscreenIcon("M3,2 L7,2 L7,18 L3,18 Z M13,2 L17,2 L17,18 L13,18 Z");
-        _fullscreenPlayPauseIcon.Fill = new SolidColorBrush(Color.Parse("#0F1114"));
+        _fullscreenPlayPauseIcon = CreatePlayPauseIcon();
         var playPauseButton = CreateFullscreenActionButton(_fullscreenPlayPauseIcon, true);
         playPauseButton.Click += PlayPause_Click;
-        _fullscreenPreviousChannelButton = CreateFullscreenActionButton(CreateFullscreenIcon("M17,4 L7,10 L17,16 Z M4,4 L4,16"));
+        _fullscreenPreviousChannelButton = CreateFullscreenActionButton(CreateFullscreenIcon("M6,5 L6,19 M19,5 L9,12 L19,19 Z", 20, 1.8));
         _fullscreenPreviousChannelButton.Click += PreviousChannel_Click;
-        var lastChannelIcon = CreateFullscreenIcon("M6,7 L2,11 L6,15 M3,11 L12,11 C16,11 18,13 18,17");
-        lastChannelIcon.Fill = null;
-        lastChannelIcon.Stroke = Brushes.White;
-        lastChannelIcon.StrokeThickness = 1.8;
-        _fullscreenLastChannelButton = CreateFullscreenActionButton(lastChannelIcon);
+        _fullscreenLastChannelButton = CreateFullscreenActionButton(CreateFullscreenIcon("M4,4 L4,9 L9,9 M5.5,7 A8,8 0 1 1 4.8,15", 21));
         _fullscreenLastChannelButton.Click += LastChannel_Click;
-        _fullscreenNextChannelButton = CreateFullscreenActionButton(CreateFullscreenIcon("M3,4 L13,10 L3,16 Z M16,4 L16,16"));
+        _fullscreenNextChannelButton = CreateFullscreenActionButton(CreateFullscreenIcon("M18,5 L18,19 M5,5 L15,12 L5,19 Z", 20, 1.8));
         _fullscreenNextChannelButton.Click += NextChannel_Click;
         _fullscreenRewindButton = CreateFullscreenActionButton(CreateFullscreenSeekIcon("10", rewind: true));
         _fullscreenRewindButton.Click += Rewind_Click;
@@ -2428,11 +2924,15 @@ public partial class MainWindow : Window
         _fullscreenForwardButton.Click += Forward_Click;
         UpdateChannelNavigationButtons();
         UpdateSeekControls(_playingContent != ContentKind.Live && _mediaPlayer.IsSeekable && _mediaPlayer.Length > 0);
-        var exitIcon = CreateFullscreenIcon("M7,2 L2,2 L2,7 M18,7 L18,2 L13,2 M13,18 L18,18 L18,13 M2,13 L2,18 L7,18");
-        exitIcon.Fill = null;
-        exitIcon.Stroke = Brushes.White;
-        exitIcon.StrokeThickness = 2;
-        var exitButton = CreateFullscreenActionButton(exitIcon);
+        var trackButton = CreateFullscreenMenuButton(
+            "M3,5 L21,5 L21,19 L3,19 Z M6,14 L11,14 M14,14 L18,14 M6,10.5 L9,10.5 M12,10.5 L18,10.5",
+            out var trackPanel, BuildTrackMenu);
+        _fullscreenTrackPanel = trackPanel;
+        var optionsButton = CreateFullscreenMenuButton(
+            "M5,12 A1.6,1.6 0 1 1 5.01,12 M12,12 A1.6,1.6 0 1 1 12.01,12 M19,12 A1.6,1.6 0 1 1 19.01,12",
+            out _, BuildPlaybackOptionsMenu);
+        var exitButton = CreateFullscreenActionButton(
+            CreateFullscreenIcon("M9,4 L4,4 L4,9 M15,4 L20,4 L20,9 M20,15 L20,20 L15,20 M9,20 L4,20 L4,15", 21, 1.8));
         exitButton.Click += (_, _) => SetPlayerFullscreen(false);
 
         var actions = new StackPanel
@@ -2447,8 +2947,10 @@ public partial class MainWindow : Window
         actions.Children.Add(_fullscreenRewindButton);
         actions.Children.Add(_fullscreenForwardButton);
         actions.Children.Add(volumeButton);
-        actions.Children.Add(_fullscreenVolumeSlider);
+        actions.Children.Add(volumeGroove);
         actions.Children.Add(playPauseButton);
+        actions.Children.Add(trackButton);
+        actions.Children.Add(optionsButton);
         actions.Children.Add(exitButton);
 
         var controlRow = new Grid
@@ -2488,6 +2990,7 @@ public partial class MainWindow : Window
             TransparencyLevelHint = [WindowTransparencyLevel.Transparent],
             Content = _fullscreenControlsOverlaySurface
         };
+        _fullscreenControlsOverlay.RequestedThemeVariant = RequestedThemeVariant;
         _fullscreenControlsOverlay.PointerMoved += (_, _) => HandleFullscreenPointerActivity();
         _fullscreenControlsOverlay.KeyDown += (_, e) =>
         {
@@ -2495,47 +2998,56 @@ public partial class MainWindow : Window
         };
     }
 
-    private static Avalonia.Controls.Shapes.Path CreateFullscreenIcon(string data) => new()
+    // Tum ikonlar 24x24 tuval icinde cizilir; Viewbox olcekledigi icin hepsi
+    // ayni optik agirlikta gorunur. Alt bardaki ikonlarla birebir ayni yontem.
+    private static Control CreateFullscreenIcon(string data, double size = 21, double thickness = 1.7)
     {
-        Data = Avalonia.Media.Geometry.Parse(data),
-        Fill = Brushes.White,
-        Width = 20,
-        Height = 20,
+        var canvas = new Canvas { Width = 24, Height = 24 };
+        canvas.Children.Add(new Avalonia.Controls.Shapes.Path
+        {
+            Data = Avalonia.Media.Geometry.Parse(data),
+            Stroke = new SolidColorBrush(Color.Parse("#F2F4F7")),
+            StrokeThickness = thickness,
+            StrokeJoin = PenLineJoin.Round,
+            StrokeLineCap = PenLineCap.Round,
+            Fill = Brushes.Transparent
+        });
+        return new Viewbox { Width = size, Height = size, Child = canvas };
+    }
+
+    private static Avalonia.Controls.Shapes.Path CreatePlayPauseIcon() => new()
+    {
+        Data = Avalonia.Media.Geometry.Parse("M3,2 L7,2 L7,18 L3,18 Z M13,2 L17,2 L17,18 L13,18 Z"),
+        Fill = new SolidColorBrush(Color.Parse("#140F0D")),
+        Width = 18,
+        Height = 18,
         Stretch = Stretch.Uniform
     };
 
     private static Grid CreateFullscreenSeekIcon(string seconds, bool rewind)
     {
-        var grid = new Grid { Width = 24, Height = 24 };
-        grid.Children.Add(new Avalonia.Controls.Shapes.Path
-        {
-            Data = Avalonia.Media.Geometry.Parse(rewind
-                ? "M8,6 L4,6 L4,2 M4,6 C6,3 10,2 13,3 C18,4 20,10 18,15 C16,20 9,21 5,17"
-                : "M16,6 L20,6 L20,2 M20,6 C18,3 14,2 11,3 C6,4 4,10 6,15 C8,20 15,21 19,17"),
-            Stroke = Brushes.White,
-            StrokeThickness = 1.7,
-            StrokeLineCap = PenLineCap.Round,
-            Fill = null
-        });
+        var grid = new Grid();
+        grid.Children.Add(CreateFullscreenIcon(rewind
+            ? "M5,5 L5,10 L10,10 M6,8 A8,8 0 1 1 5,16"
+            : "M19,5 L19,10 L14,10 M18,8 A8,8 0 1 0 19,16", 24, 1.6));
         grid.Children.Add(new TextBlock
         {
             Text = seconds,
-            Foreground = Brushes.White,
+            Foreground = new SolidColorBrush(Color.Parse("#F2F4F7")),
             FontSize = 8,
-            FontWeight = FontWeight.Bold,
+            FontWeight = FontWeight.SemiBold,
             HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Avalonia.Thickness(0, 3, 0, 0)
+            VerticalAlignment = VerticalAlignment.Center
         });
         return grid;
     }
 
     private static Button CreateFullscreenActionButton(Control content, bool primary = false) => new()
     {
-        Width = 46,
-        Height = 46,
-        Padding = new Avalonia.Thickness(12),
-        CornerRadius = new Avalonia.CornerRadius(23),
+        Width = primary ? 52 : 44,
+        Height = primary ? 52 : 44,
+        Padding = new Avalonia.Thickness(0),
+        CornerRadius = new Avalonia.CornerRadius(primary ? 26 : 22),
         BorderThickness = new Avalonia.Thickness(0),
         Background = new SolidColorBrush(Color.Parse(primary ? "#F2622E" : "#1C2026")),
         Content = content,
@@ -2543,31 +3055,109 @@ public partial class MainWindow : Window
         VerticalContentAlignment = VerticalAlignment.Center
     };
 
+    // Tam ekran ayri bir pencere oldugu icin tema sablonlari oraya ulasmiyordu ve
+    // Fluent'in tutamagi ize gore kayik duruyordu. Cubuk burada elle ciziliyor:
+    // iz, dolu kisim ve tutamak ayni dikey merkezde.
+    private Control CreateFullscreenVolumeBar()
+    {
+        var track = new Border
+        {
+            Height = 4,
+            CornerRadius = new Avalonia.CornerRadius(2),
+            Background = new SolidColorBrush(Color.Parse("#525B69")),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        _fullscreenVolumeFill = new Border
+        {
+            Height = 4,
+            Width = 0,
+            CornerRadius = new Avalonia.CornerRadius(2),
+            Background = new SolidColorBrush(Color.Parse("#F2622E")),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        _fullscreenVolumeThumb = new Avalonia.Controls.Shapes.Ellipse
+        {
+            Width = FullscreenVolumeThumbSize,
+            Height = FullscreenVolumeThumbSize,
+            Fill = new SolidColorBrush(Color.Parse("#F2F4F7")),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        var host = new Grid
+        {
+            Width = FullscreenVolumeTrackWidth,
+            Height = 20,
+            Background = Brushes.Transparent,
+            VerticalAlignment = VerticalAlignment.Center,
+            Cursor = new Cursor(StandardCursorType.Hand)
+        };
+        host.Children.Add(track);
+        host.Children.Add(_fullscreenVolumeFill);
+        host.Children.Add(_fullscreenVolumeThumb);
+        host.PointerPressed += (_, e) =>
+        {
+            SetVolumeFromFullscreenBar(e.GetPosition(host).X);
+            e.Pointer.Capture(host);
+        };
+        host.PointerMoved += (_, e) =>
+        {
+            if (e.GetCurrentPoint(host).Properties.IsLeftButtonPressed)
+                SetVolumeFromFullscreenBar(e.GetPosition(host).X);
+        };
+        host.PointerReleased += (_, e) => e.Pointer.Capture(null);
+
+        UpdateFullscreenVolumeBar(VolumeSlider.Value);
+        return host;
+    }
+
+    private void SetVolumeFromFullscreenBar(double x) =>
+        VolumeSlider.Value = Math.Clamp(x / FullscreenVolumeTrackWidth * 100, 0, 100);
+
+    private void UpdateFullscreenVolumeBar(double value)
+    {
+        var ratio = Math.Clamp(value / 100, 0, 1);
+        if (_fullscreenVolumeFill is not null)
+            _fullscreenVolumeFill.Width = FullscreenVolumeTrackWidth * ratio;
+        if (_fullscreenVolumeThumb is not null)
+            _fullscreenVolumeThumb.Margin =
+                new Avalonia.Thickness(ratio * (FullscreenVolumeTrackWidth - FullscreenVolumeThumbSize), 0, 0, 0);
+        if (_fullscreenVolumeText is not null)
+            _fullscreenVolumeText.Text = $"%{value:0}";
+    }
+
     private Button CreateFullscreenVolumeButton()
     {
         var canvas = new Canvas { Width = 24, Height = 24 };
         canvas.Children.Add(new Avalonia.Controls.Shapes.Path
         {
-            Data = Avalonia.Media.Geometry.Parse("M3,9 L7,9 L12,5 L12,19 L7,15 L3,15 Z"),
-            Fill = Brushes.White
+            Data = Avalonia.Media.Geometry.Parse("M3,9 L7,9 L12,5 L12,17 L7,13 L3,13 Z"),
+            Stroke = new SolidColorBrush(Color.Parse("#F2F4F7")),
+            StrokeThickness = 1.7,
+            StrokeJoin = PenLineJoin.Round,
+            StrokeLineCap = PenLineCap.Round,
+            Fill = Brushes.Transparent
         });
         _fullscreenVolumeWaveIcon = new Avalonia.Controls.Shapes.Path
         {
-            Data = Avalonia.Media.Geometry.Parse("M15,8.5 C16.3,9.4 17,10.6 17,12 C17,13.4 16.3,14.6 15,15.5 M18,5.5 C20,7.2 21,9.4 21,12 C21,14.6 20,16.8 18,18.5"),
-            Stroke = Brushes.White,
-            StrokeThickness = 1.8,
+            Data = Avalonia.Media.Geometry.Parse("M15,8 C17,10 17,12 15,14 M18,5 C22,9 22,13 18,17"),
+            Stroke = new SolidColorBrush(Color.Parse("#F2F4F7")),
+            StrokeThickness = 1.7,
+            StrokeLineCap = PenLineCap.Round,
             IsVisible = VolumeSlider.Value > 0
         };
         _fullscreenVolumeMutedIcon = new Avalonia.Controls.Shapes.Path
         {
-            Data = Avalonia.Media.Geometry.Parse("M15,9 L21,15 M21,9 L15,15"),
-            Stroke = Brushes.White,
-            StrokeThickness = 2,
+            Data = Avalonia.Media.Geometry.Parse("M15,9 L20,14 M20,9 L15,14"),
+            Stroke = new SolidColorBrush(Color.Parse("#EA2E4E")),
+            StrokeThickness = 1.8,
+            StrokeLineCap = PenLineCap.Round,
             IsVisible = VolumeSlider.Value <= 0
         };
         canvas.Children.Add(_fullscreenVolumeWaveIcon);
         canvas.Children.Add(_fullscreenVolumeMutedIcon);
-        return CreateFullscreenActionButton(new Viewbox { Width = 22, Height = 22, Child = canvas });
+        return CreateFullscreenActionButton(new Viewbox { Width = 21, Height = 21, Child = canvas });
     }
 
     private void UpdateFullscreenControlsOverlayBounds()
@@ -2643,7 +3233,7 @@ public partial class MainWindow : Window
             Grid.SetColumnSpan(PlayerPanel, 1);
             PlayerPanel.CornerRadius = new Avalonia.CornerRadius(0);
             PlayerPanel.BorderThickness = new Avalonia.Thickness(0);
-            PlayerLayout.RowDefinitions = TimelinePanel.IsVisible ? new RowDefinitions("*,124") : new RowDefinitions("*,104");
+            PlayerLayout.RowDefinitions = new RowDefinitions("*,Auto");
             PlayerControls.IsVisible = true;
             if (_epgPanelWasVisibleBeforeFullscreen && _playingChannel is { Kind: ContentKind.Live } channel)
                 UpdateEpgPanel(channel, true);
@@ -2656,6 +3246,52 @@ public partial class MainWindow : Window
                 : L("Hazır");
             if (_playingChannel is not null) Dispatcher.UIThread.Post(ShowPlayerOverlay);
         }
+    }
+
+    // Oynatilan yayinin gercek cozunurlugu ve kare hizi; VLC bunlari ancak
+    // goruntu akmaya basladiktan sonra bildirdigi icin duzenli araliklarla okunur.
+    private void UpdateMediaInfoBadge()
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            try
+            {
+                if (_playingChannel is null || !_mediaPlayer.IsPlaying)
+                {
+                    MediaInfoBadge.IsVisible = false;
+                    return;
+                }
+
+                uint width = 0;
+                uint height = 0;
+                if (!_mediaPlayer.Size(0, ref width, ref height) || width == 0 || height == 0)
+                {
+                    var video = _mediaPlayer.Media?.Tracks.FirstOrDefault(t => t.TrackType == TrackType.Video);
+                    if (video is { } track)
+                    {
+                        width = track.Data.Video.Width;
+                        height = track.Data.Video.Height;
+                    }
+                }
+
+                if (width == 0 || height == 0)
+                {
+                    MediaInfoBadge.IsVisible = false;
+                    return;
+                }
+
+                var fps = _mediaPlayer.Fps;
+                MediaInfoText.Text = fps > 0.1f
+                    ? $"{width}×{height} · {fps:0.#} FPS"
+                    : $"{width}×{height}";
+                MediaInfoBadge.IsVisible = true;
+            }
+            catch
+            {
+                // Bilgi okunamazsa rozet gizli kalir; oynatma etkilenmez.
+                MediaInfoBadge.IsVisible = false;
+            }
+        });
     }
 
     private void SetStatus(string text) => Dispatcher.UIThread.Post(() =>
@@ -2709,6 +3345,7 @@ public partial class MainWindow : Window
         SetSettingsTab(SettingsTabPlaylists, SettingsTabPlaylistsIcon, SettingsSectionPlaylists, section == "playlists");
         SetSettingsTab(SettingsTabGeneral, SettingsTabGeneralIcon, SettingsSectionGeneral, section == "general");
         SetSettingsTab(SettingsTabUpdate, SettingsTabUpdateIcon, SettingsSectionUpdate, section == "update");
+        SetSettingsTab(SettingsTabStats, SettingsTabStatsIcon, SettingsSectionStats, section == "stats");
         SetSettingsTab(SettingsTabPrivacy, SettingsTabPrivacyIcon, SettingsSectionPrivacy, section == "privacy");
         SetSettingsTab(SettingsTabAbout, SettingsTabAboutIcon, SettingsSectionAbout, section == "about");
 
@@ -2716,21 +3353,25 @@ public partial class MainWindow : Window
         {
             "general" => L("Genel"),
             "update" => L("Güncelleme"),
+            "stats" => L("İstatistikler"),
             "privacy" => L("Gizlilik"),
             "about" => L("Hakkında"),
             _ => L("Oynatma Listeleri")
         };
 
         if (section == "update") RefreshUpdateSection();
+        if (section == "stats") RefreshStatsSection();
         if (section != "privacy") return;
         SettingsDataPathText.Text = SettingsDirectory;
         SettingsPrivacyStatus.IsVisible = false;
+        ParentalStatusText.IsVisible = false;
+        RefreshParentalView();
     }
 
     private static void SetSettingsTab(Button tab, Avalonia.Controls.Shapes.Path icon, Control section, bool active)
     {
         tab.Classes.Set("active", active);
-        icon.Stroke = new SolidColorBrush(Color.Parse(active ? "#FF8A5C" : "#A3ABB8"));
+        icon.Stroke = active ? new SolidColorBrush(Color.Parse(ChannelLogo.AccentColor)) : AppTheme.Brush("TextMutedBg");
         section.IsVisible = active;
     }
 
@@ -2756,6 +3397,114 @@ public partial class MainWindow : Window
 
         UpdateHomeDashboard();
         if (_channels.Count > 0) RefreshGroups(preserveSelection: true, resetSeriesBrowser: false);
+    }
+
+    // Oynatma surdukce her sayac tikinda izleme suresi birikir.
+    private void AccumulateWatchTime()
+    {
+        if (_playingChannel is not { } channel || !_mediaPlayer.IsPlaying) return;
+
+        var state = GetOrCreateLibraryItem(channel);
+        state.Kind = channel.Kind;
+        state.WatchedSeconds += 5;
+        SaveLibraryState();
+    }
+
+    private void RefreshStatsSection()
+    {
+        var items = _libraryState.Items.Values.Where(item => item.WatchedSeconds > 0).ToList();
+        var total = items.Sum(item => item.WatchedSeconds);
+
+        StatsTotalText.Text = FormatWatchDuration(total);
+        StatsItemsText.Text = $"{items.Count:N0}";
+        StatsPlaysText.Text = $"{_libraryState.Items.Values.Sum(item => item.PlayCount):N0}";
+
+        StatsKindList.Children.Clear();
+        foreach (var kind in new[] { ContentKind.Live, ContentKind.Movie, ContentKind.Series })
+        {
+            var seconds = items.Where(item => item.Kind == kind).Sum(item => item.WatchedSeconds);
+            var label = kind switch
+            {
+                ContentKind.Movie => L("Filmler"),
+                ContentKind.Series => L("Diziler"),
+                _ => L("Canlı TV")
+            };
+            StatsKindList.Children.Add(CreateStatRow(label, FormatWatchDuration(seconds),
+                total > 0 ? seconds / (double)total : 0));
+        }
+
+        var top = _libraryState.Items
+            .Where(pair => pair.Value.WatchedSeconds > 0)
+            .OrderByDescending(pair => pair.Value.WatchedSeconds)
+            .Take(10)
+            .Select(pair => (
+                Name: _channels.FirstOrDefault(ch => ch.Id == pair.Key)?.Name ?? L("Listede yok"),
+                pair.Value.WatchedSeconds))
+            .ToList();
+
+        StatsTopList.Children.Clear();
+        StatsEmptyText.IsVisible = top.Count == 0;
+        var best = top.Count > 0 ? top[0].WatchedSeconds : 0;
+        foreach (var entry in top)
+            StatsTopList.Children.Add(CreateStatRow(entry.Name, FormatWatchDuration(entry.WatchedSeconds),
+                best > 0 ? entry.WatchedSeconds / (double)best : 0));
+    }
+
+    // Ad, sure ve oransal cubuktan olusan tek satir.
+    private static Control CreateStatRow(string label, string value, double ratio)
+    {
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+        var name = new TextBlock
+        {
+            Text = label,
+            FontSize = 12.5,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Avalonia.Thickness(0, 0, 14, 0)
+        };
+        var amount = new TextBlock
+        {
+            Text = value,
+            FontSize = 12,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = AppTheme.Brush("TextMutedBg"),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        grid.Children.Add(name);
+        Grid.SetColumn(amount, 1);
+        grid.Children.Add(amount);
+
+        var bar = new ProgressBar
+        {
+            Minimum = 0,
+            Maximum = 100,
+            Value = Math.Clamp(ratio * 100, 0, 100),
+            Height = 4,
+            Margin = new Avalonia.Thickness(0, 7, 0, 0)
+        };
+
+        return new StackPanel { Children = { grid, bar } };
+    }
+
+    private static string FormatWatchDuration(long seconds)
+    {
+        if (seconds < 60) return $"{seconds} sn";
+        if (seconds < 3600) return $"{seconds / 60} dk";
+        var hours = seconds / 3600;
+        var minutes = seconds % 3600 / 60;
+        return minutes == 0 ? $"{hours} sa" : $"{hours} sa {minutes} dk";
+    }
+
+    private void ResetStats_Click(object? sender, RoutedEventArgs e)
+    {
+        foreach (var item in _libraryState.Items.Values)
+        {
+            item.WatchedSeconds = 0;
+            item.PlayCount = 0;
+        }
+
+        SaveLibraryState();
+        RefreshStatsSection();
     }
 
     private void OpenDataFolder_Click(object? sender, RoutedEventArgs e)
@@ -2799,6 +3548,625 @@ public partial class MainWindow : Window
         SettingsPrivacyStatus.Text = text;
         SettingsPrivacyStatus.IsVisible = true;
     }
+
+    // Liste yuklendikten sonra en son izlenen yayin, kullanici istemisse acilir.
+    private void TryResumeLastChannel()
+    {
+        if (!Preferences.Current.ResumeLastChannel || _playingChannel is not null) return;
+        if (Preferences.Current.LastChannelId is not { Length: > 0 } id) return;
+
+        var channel = _channels.FirstOrDefault(c => c.Id == id);
+        if (channel is null) return;
+
+        OpenLibrary(channel.Kind);
+        PlayChannel(channel);
+    }
+
+    private bool IsGroupLocked(string group) =>
+        !_parentalUnlocked &&
+        Preferences.Current.ParentalPinHash is { Length: > 0 } &&
+        Preferences.Current.LockedGroups.Contains(group, StringComparer.CurrentCultureIgnoreCase);
+
+    private static string HashPin(string pin) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes("bgiptv:" + pin)));
+
+    private void LockGroup_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { DataContext: ChannelGroup group }) return;
+        if (group.Kind != LibraryGroupKind.Regular) return;
+
+        if (Preferences.Current.ParentalPinHash is not { Length: > 0 })
+        {
+            ShowSettings("privacy");
+            ShowParentalStatus(L("Önce bir PIN belirleyin."));
+            return;
+        }
+
+        if (Preferences.Current.LockedGroups.Contains(group.Name, StringComparer.CurrentCultureIgnoreCase)) return;
+
+        Preferences.Current.LockedGroups.Add(group.Name);
+        Preferences.Save();
+        RefreshParentalView();
+        RefreshGroups();
+    }
+
+    private void UnlockGroup_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { CommandParameter: string group }) return;
+        Preferences.Current.LockedGroups.RemoveAll(g => string.Equals(g, group, StringComparison.CurrentCultureIgnoreCase));
+        Preferences.Save();
+        RefreshParentalView();
+        if (_channels.Count > 0) RefreshGroups(preserveSelection: true, resetSeriesBrowser: false);
+    }
+
+    private void SetParentalPin_Click(object? sender, RoutedEventArgs e)
+    {
+        var pin = ParentalPinBox.Text?.Trim() ?? "";
+        if (pin.Length is < 4 or > 8 || !pin.All(char.IsDigit))
+        {
+            ShowParentalStatus(L("PIN 4-8 haneli sayı olmalı."));
+            return;
+        }
+
+        Preferences.Current.ParentalPinHash = HashPin(pin);
+        Preferences.Save();
+        ParentalPinBox.Text = "";
+        _parentalUnlocked = true;
+        ShowParentalStatus(L("PIN kaydedildi."));
+        RefreshParentalView();
+    }
+
+    private void UnlockParental_Click(object? sender, RoutedEventArgs e)
+    {
+        var pin = ParentalPinBox.Text?.Trim() ?? "";
+        if (Preferences.Current.ParentalPinHash != HashPin(pin))
+        {
+            ShowParentalStatus(L("PIN hatalı."));
+            return;
+        }
+
+        ParentalPinBox.Text = "";
+        _parentalUnlocked = true;
+        ShowParentalStatus(L("Kilit bu oturum için açıldı."));
+        RefreshParentalView();
+        if (_channels.Count > 0) RefreshGroups(preserveSelection: true, resetSeriesBrowser: false);
+    }
+
+    private void RemoveParentalPin_Click(object? sender, RoutedEventArgs e)
+    {
+        var pin = ParentalPinBox.Text?.Trim() ?? "";
+        if (Preferences.Current.ParentalPinHash != HashPin(pin))
+        {
+            ShowParentalStatus(L("PIN hatalı."));
+            return;
+        }
+
+        Preferences.Current.ParentalPinHash = null;
+        Preferences.Current.LockedGroups.Clear();
+        Preferences.Save();
+        ParentalPinBox.Text = "";
+        _parentalUnlocked = false;
+        ShowParentalStatus(L("PIN kaldırıldı, kilitler açıldı."));
+        RefreshParentalView();
+        if (_channels.Count > 0) RefreshGroups(preserveSelection: true, resetSeriesBrowser: false);
+    }
+
+    private void ShowParentalStatus(string text)
+    {
+        ParentalStatusText.Text = text;
+        ParentalStatusText.IsVisible = true;
+    }
+
+    private void RefreshParentalView()
+    {
+        var hasPin = Preferences.Current.ParentalPinHash is { Length: > 0 };
+        ParentalPinButton.Content = hasPin ? L("PIN\'i değiştir") : L("PIN belirle");
+        ParentalUnlockButton.IsVisible = hasPin && !_parentalUnlocked;
+        ParentalRemoveButton.IsVisible = hasPin;
+
+        var locked = Preferences.Current.LockedGroups
+            .OrderBy(g => g, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+        LockedGroupsList.ItemsSource = locked;
+        NoLockedGroupsText.IsVisible = locked.Count == 0;
+    }
+
+    private static bool IsGroupHidden(string group) =>
+        Preferences.Current.HiddenGroups.Contains(group, StringComparer.CurrentCultureIgnoreCase);
+
+    // Gruplar sag tik menusunden gizlenir; listeden cikar ama liste yeniden
+    // yuklendiginde tercih korunur.
+    private void HideGroup_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { DataContext: ChannelGroup group }) return;
+        if (group.Kind != LibraryGroupKind.Regular || IsGroupHidden(group.Name)) return;
+
+        Preferences.Current.HiddenGroups.Add(group.Name);
+        Preferences.Save();
+        RefreshGroups();
+        RefreshHiddenGroupsView();
+    }
+
+    private void UnhideGroup_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { CommandParameter: string group }) return;
+        Preferences.Current.HiddenGroups.RemoveAll(g => string.Equals(g, group, StringComparison.CurrentCultureIgnoreCase));
+        Preferences.Save();
+        RefreshHiddenGroupsView();
+        if (_channels.Count > 0) RefreshGroups(preserveSelection: true, resetSeriesBrowser: false);
+    }
+
+    private void ShowAllGroups_Click(object? sender, RoutedEventArgs e)
+    {
+        if (Preferences.Current.HiddenGroups.Count == 0) return;
+        Preferences.Current.HiddenGroups.Clear();
+        Preferences.Save();
+        RefreshHiddenGroupsView();
+        if (_channels.Count > 0) RefreshGroups(preserveSelection: true, resetSeriesBrowser: false);
+    }
+
+    private void RefreshHiddenGroupsView()
+    {
+        var hidden = Preferences.Current.HiddenGroups
+            .OrderBy(g => g, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+        HiddenGroupsList.ItemsSource = hidden;
+        NoHiddenGroupsText.IsVisible = hidden.Count == 0;
+        ShowAllGroupsButton.IsEnabled = hidden.Count > 0;
+    }
+
+    private static readonly (string Accent, string Soft)[] AccentPalette =
+    [
+        ("#F2622E", "#FF8A5C"),
+        ("#2E7CF2", "#5C9DFF"),
+        ("#8B5CF6", "#A78BFA"),
+        ("#1FB981", "#4ED9A0"),
+        ("#E8394B", "#FF6B7A")
+    ];
+
+    private void SetTheme_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string theme } || Preferences.Current.Theme == theme) return;
+        Preferences.Current.Theme = theme;
+        Preferences.Save();
+        ApplyTheme();
+        ApplyAccentColor();
+        if (_channels.Count > 0) RefreshGroups(preserveSelection: true, resetSeriesBrowser: false);
+    }
+
+    private void ApplyTheme()
+    {
+        AppTheme.Apply(this, Preferences.Current.Theme);
+        var light = AppTheme.Name == AppTheme.Light;
+        ThemeDarkButton.Classes.Set("active", !light);
+        ThemeLightButton.Classes.Set("active", light);
+        ThemeDarkCheck.IsVisible = !light;
+        ThemeLightCheck.IsVisible = light;
+        ChannelLogo.PlaceholderIsLight = light;
+    }
+
+    private void SetAccentColor_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string accent }) return;
+        Preferences.Current.AccentColor = accent;
+        Preferences.Save();
+        ApplyAccentColor();
+    }
+
+    // Vurgu rengi tema kaynaklarina yazilir; kodla boyanan yerler de burada tazelenir.
+    private void ApplyAccentColor()
+    {
+        var accent = Preferences.Current.AccentColor;
+        var soft = AccentPalette.FirstOrDefault(p => p.Accent == accent).Soft ?? "#FF8A5C";
+        var color = Color.Parse(accent);
+
+        Resources["AccentBrush"] = new SolidColorBrush(color);
+        Resources["AccentSoftBrush"] = new SolidColorBrush(Color.Parse(soft));
+        Resources["AccentTintBrush"] = new SolidColorBrush(Color.FromArgb(0x26, color.R, color.G, color.B));
+        Resources["AccentTintStrongBrush"] = new SolidColorBrush(Color.FromArgb(0x33, color.R, color.G, color.B));
+
+        foreach (var glow in new[] { HomeLiveGlow, HomeMovieGlow, HomeSeriesGlow })
+            glow.Fill = new RadialGradientBrush
+            {
+                GradientStops =
+                {
+                    new GradientStop(Color.FromArgb(0x1F, color.R, color.G, color.B), 0),
+                    new GradientStop(Color.FromArgb(0x00, color.R, color.G, color.B), 1)
+                }
+            };
+
+        foreach (var swatch in AccentSwatches.Children.OfType<Button>())
+            swatch.Classes.Set("active", swatch.Tag as string == accent);
+
+        ChannelLogo.AccentColor = soft;
+        ShowSettingsSection(_settingsSection);
+    }
+
+    private void ResumeLastChannel_Changed(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleSwitch toggle) return;
+        var enabled = toggle.IsChecked == true;
+        if (Preferences.Current.ResumeLastChannel == enabled) return;
+        Preferences.Current.ResumeLastChannel = enabled;
+        Preferences.Save();
+    }
+
+    // Ses ve altyazi izleri ancak oynatma basladiktan sonra bilindigi icin
+    // menu her acilisinda yeniden kurulur.
+    private void BuildTrackMenu(StackPanel panel)
+    {
+        panel.Children.Clear();
+
+        panel.Children.Add(CreateTrackSection(L("SES İZİ")));
+        var audioTracks = SafeTrackDescriptions(() => _mediaPlayer.AudioTrackDescription);
+        if (audioTracks.Length == 0)
+            panel.Children.Add(CreateTrackHint(L("Ses izi bulunamadı.")));
+        else
+            foreach (var track in audioTracks)
+                panel.Children.Add(CreateTrackButton(panel,
+                    track.Name, track.Id == _mediaPlayer.AudioTrack, () => _mediaPlayer.SetAudioTrack(track.Id)));
+
+        panel.Children.Add(CreateTrackSection(L("ALTYAZI")));
+        var subtitleTracks = SafeTrackDescriptions(() => _mediaPlayer.SpuDescription);
+        panel.Children.Add(CreateTrackButton(panel,
+            L("Kapalı"), _mediaPlayer.Spu <= 0, () => _mediaPlayer.SetSpu(-1)));
+        foreach (var track in subtitleTracks.Where(t => t.Id > 0))
+            panel.Children.Add(CreateTrackButton(panel,
+                track.Name, track.Id == _mediaPlayer.Spu, () => _mediaPlayer.SetSpu(track.Id)));
+
+        var loadButton = new Button
+        {
+            Content = L("Dosyadan altyazı yükle..."),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            Margin = new Avalonia.Thickness(0, 4, 0, 0)
+        };
+        loadButton.Click += LoadSubtitleFile_Click;
+        panel.Children.Add(loadButton);
+
+        panel.Children.Add(CreateTrackSection(L("ALTYAZI GECİKMESİ")));
+        var delayRow = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
+        var minus = CreateDelayButton("−0,5 sn", -500_000);
+        var plus = CreateDelayButton("+0,5 sn", 500_000);
+        _subtitleDelayText = new TextBlock
+        {
+            Text = FormatSubtitleDelay(),
+            FontSize = 12,
+            FontWeight = FontWeight.SemiBold,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        delayRow.Children.Add(minus);
+        Grid.SetColumn(_subtitleDelayText, 1);
+        delayRow.Children.Add(_subtitleDelayText);
+        Grid.SetColumn(plus, 2);
+        delayRow.Children.Add(plus);
+        panel.Children.Add(delayRow);
+
+        panel.Children.Add(CreateTrackSection(L("ALTYAZI BOYUTU")));
+        var sizes = new WrapPanel();
+        foreach (var (label, value) in new[] { (L("Küçük"), 20), (L("Normal"), 16), (L("Büyük"), 12) })
+        {
+            var button = new Button { Content = label, Tag = value, Classes = { "chip" } };
+            button.Classes.Set("active", Preferences.Current.SubtitleFontSize == value);
+            button.Click += SetSubtitleSize_Click;
+            sizes.Children.Add(button);
+        }
+
+        panel.Children.Add(sizes);
+        panel.Children.Add(CreateTrackHint(L("Boyut değişikliği sonraki oynatmada uygulanır.")));
+    }
+
+    private static LibVLCSharp.Shared.Structures.TrackDescription[] SafeTrackDescriptions(
+        Func<LibVLCSharp.Shared.Structures.TrackDescription[]> read)
+    {
+        try { return read() ?? []; }
+        catch (Exception ex)
+        {
+            AppLog.Write("İz listesi okunamadı", ex);
+            return [];
+        }
+    }
+
+    private static TextBlock CreateTrackSection(string title) => new()
+    {
+        Text = title,
+        FontSize = 10.5,
+        FontWeight = FontWeight.Bold,
+        Foreground = AppTheme.Brush("TextFaintBg")
+    };
+
+    private static TextBlock CreateTrackHint(string text) => new()
+    {
+        Text = text,
+        FontSize = 11,
+        Foreground = AppTheme.Brush("TextFaintBg"),
+        TextWrapping = TextWrapping.Wrap
+    };
+
+    private Button CreateTrackButton(StackPanel panel, string label, bool active, Action apply)
+    {
+        var button = new Button
+        {
+            Content = label,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            Padding = new Avalonia.Thickness(13, 8),
+            Margin = new Avalonia.Thickness(0, 0, 0, 5)
+        };
+        button.Classes.Set("trackOption", true);
+        button.Classes.Set("active", active);
+        button.Click += (_, _) =>
+        {
+            apply();
+            BuildTrackMenu(panel);
+        };
+        return button;
+    }
+
+    private Button CreateDelayButton(string label, long deltaMicroseconds)
+    {
+        var button = new Button { Content = label, Classes = { "chip" }, Margin = new Avalonia.Thickness(0) };
+        button.Click += (_, _) =>
+        {
+            _mediaPlayer.SetSpuDelay(_mediaPlayer.SpuDelay + deltaMicroseconds);
+            if (_subtitleDelayText is not null) _subtitleDelayText.Text = FormatSubtitleDelay();
+        };
+        return button;
+    }
+
+    private string FormatSubtitleDelay() => $"{_mediaPlayer.SpuDelay / 1_000_000.0:+0.0;-0.0;0,0} sn";
+
+    private void SetSubtitleSize_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: int size }) return;
+        Preferences.Current.SubtitleFontSize = size;
+        Preferences.Save();
+        BuildTrackMenu(TrackFlyoutPanel);
+        if (_fullscreenTrackPanel is not null) BuildTrackMenu(_fullscreenTrackPanel);
+    }
+
+    // Harici altyazi dosyasi secildiginde hemen yuklenir; oynatma yeni
+    // basliyorsa dosya beklemeye alinir ve Playing olayinda uygulanir.
+    private async void LoadSubtitleFile_Click(object? sender, RoutedEventArgs e)
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = L("Altyazı dosyası seç"),
+            AllowMultiple = false,
+            FileTypeFilter =
+            [
+                new FilePickerFileType("Altyazı") { Patterns = ["*.srt", "*.ass", "*.ssa", "*.sub", "*.vtt"] }
+            ]
+        });
+
+        var path = files.Count > 0 ? files[0].TryGetLocalPath() : null;
+        if (string.IsNullOrWhiteSpace(path)) return;
+
+        _pendingSubtitleFile = path;
+        if (_mediaPlayer.IsPlaying) ApplyPendingSubtitleFile();
+    }
+
+    private void ApplyPendingSubtitleFile()
+    {
+        if (_pendingSubtitleFile is not { Length: > 0 } path) return;
+        _pendingSubtitleFile = null;
+
+        try
+        {
+            _mediaPlayer.AddSlave(MediaSlaveType.Subtitle, new Uri(path).AbsoluteUri, true);
+            SetStatus($"{L("Altyazı yüklendi")}: {Path.GetFileName(path)}");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write("Altyazı yüklenemedi", ex);
+            SetStatus(L("Altyazı yüklenemedi."));
+        }
+    }
+
+    // Tam ekran ayri pencere oldugu icin hiz/oran/ekran goruntusu menusu orada kodla kurulur.
+    private void BuildPlaybackOptionsMenu(StackPanel panel)
+    {
+        panel.Children.Clear();
+
+        panel.Children.Add(CreateTrackSection(L("OYNATMA HIZI")));
+        var rates = new WrapPanel();
+        foreach (var rate in new[] { 0.5, 0.75, 1, 1.25, 1.5, 2 })
+        {
+            var tag = rate.ToString("0.##", CultureInfo.InvariantCulture);
+            var button = new Button { Content = $"{rate:0.##}×", Tag = tag, Classes = { "chip" } };
+            button.Classes.Set("active", Math.Abs(Preferences.Current.PlaybackRate - rate) < 0.001);
+            button.Click += (_, _) =>
+            {
+                SetPlaybackRate_Click(button, new RoutedEventArgs());
+                BuildPlaybackOptionsMenu(panel);
+            };
+            rates.Children.Add(button);
+        }
+
+        panel.Children.Add(rates);
+
+        panel.Children.Add(CreateTrackSection(L("GÖRÜNTÜ ORANI")));
+        var aspects = new WrapPanel();
+        foreach (var (value, label) in new[] { ("", L("Otomatik")), ("16:9", "16:9"), ("4:3", "4:3"), ("21:9", "21:9") })
+        {
+            var button = new Button { Content = label, Tag = value, Classes = { "chip" } };
+            button.Classes.Set("active", Preferences.Current.AspectRatio == value);
+            button.Click += (_, _) =>
+            {
+                SetAspectRatio_Click(button, new RoutedEventArgs());
+                BuildPlaybackOptionsMenu(panel);
+            };
+            aspects.Children.Add(button);
+        }
+
+        panel.Children.Add(aspects);
+
+        var snapshot = new Button
+        {
+            Content = L("Ekran görüntüsü al"),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Center
+        };
+        snapshot.Click += TakeSnapshot_Click;
+        panel.Children.Add(snapshot);
+    }
+
+    private Button CreateFullscreenMenuButton(string iconData, out StackPanel panel, Action<StackPanel> build)
+    {
+        panel = new StackPanel { Width = 272, Spacing = 16 };
+        var content = new ScrollViewer
+        {
+            MaxHeight = 420,
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            Content = panel
+        };
+        var target = panel;
+        var flyout = new Flyout { Placement = PlacementMode.Top, Content = content };
+        flyout.Opening += (_, _) => build(target);
+        var button = CreateFullscreenActionButton(CreateFullscreenIcon(iconData, 21));
+        button.Flyout = flyout;
+        return button;
+    }
+
+    private void SetPlaybackRate_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string tag } ||
+            !double.TryParse(tag, NumberStyles.Float, CultureInfo.InvariantCulture, out var rate)) return;
+
+        _mediaPlayer.SetRate((float)rate);
+        Preferences.Current.PlaybackRate = rate;
+        Preferences.Save();
+        UpdatePlaybackOptionChips();
+    }
+
+    private void SetAspectRatio_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string tag }) return;
+
+        _mediaPlayer.AspectRatio = tag.Length == 0 ? null : tag;
+        Preferences.Current.AspectRatio = tag;
+        Preferences.Save();
+        UpdatePlaybackOptionChips();
+    }
+
+    // Secili hiz ve oran, listedeki ilgili dugmede vurgulanir.
+    private void UpdatePlaybackOptionChips()
+    {
+        var rate = Preferences.Current.PlaybackRate.ToString("0.##", CultureInfo.InvariantCulture);
+        foreach (var chip in PlaybackRateChips.Children.OfType<Button>())
+            chip.Classes.Set("active", chip.Tag as string == rate);
+        foreach (var chip in AspectRatioChips.Children.OfType<Button>())
+            chip.Classes.Set("active", (chip.Tag as string ?? "") == Preferences.Current.AspectRatio);
+    }
+
+    // Mini oynatici: pencere kucultulup ustte tutulur, yalnizca goruntu kalir.
+    private void ToggleMiniPlayer_Click(object? sender, RoutedEventArgs e)
+    {
+        if (_isMiniPlayer)
+        {
+            ExitMiniPlayer();
+            return;
+        }
+
+        if (_playingChannel is null || !PlayerView.IsVisible) return;
+        if (_isPlayerFullscreen) SetPlayerFullscreen(false);
+
+        _miniRestoreState = WindowState;
+        _miniRestorePosition = Position;
+        _miniRestoreSize = new Size(Width, Height);
+        _isMiniPlayer = true;
+
+        HidePlayerOverlay();
+        Sidebar.IsVisible = false;
+        HeaderPanel.IsVisible = false;
+        ChannelPanel.IsVisible = false;
+        PlayerControls.IsVisible = false;
+        MiniExitButton.IsVisible = true;
+        RootGrid.ColumnDefinitions = new ColumnDefinitions("0,*");
+        ContentBody.ColumnDefinitions = new ColumnDefinitions("0,*");
+        PlayerLayout.RowDefinitions = new RowDefinitions("*,0");
+        SetEpgPanelVisibility(false);
+
+        WindowState = WindowState.Normal;
+        Topmost = true;
+        MinWidth = 320;
+        MinHeight = 200;
+        Width = 480;
+        Height = 300;
+        var screen = Screens.Primary?.WorkingArea;
+        if (screen is { } area)
+            Position = new PixelPoint(area.X + area.Width - 500, area.Y + area.Height - 340);
+    }
+
+    private void ExitMiniPlayer()
+    {
+        if (!_isMiniPlayer) return;
+        _isMiniPlayer = false;
+
+        Topmost = false;
+        MinWidth = 1120;
+        MinHeight = 700;
+        Width = _miniRestoreSize.Width;
+        Height = _miniRestoreSize.Height;
+        Position = _miniRestorePosition;
+        WindowState = _miniRestoreState;
+
+        MiniExitButton.IsVisible = false;
+        Sidebar.IsVisible = true;
+        HeaderPanel.IsVisible = true;
+        ChannelPanel.IsVisible = true;
+        PlayerControls.IsVisible = true;
+        RootGrid.ColumnDefinitions = new ColumnDefinitions("350,*");
+        ContentBody.ColumnDefinitions = new ColumnDefinitions("486,*");
+        PlayerLayout.RowDefinitions = new RowDefinitions("*,Auto");
+    }
+
+    private void TakeSnapshot_Click(object? sender, RoutedEventArgs e)
+    {
+        if (_playingChannel is not { } channel || !PlayerView.IsVisible) return;
+
+        try
+        {
+            var directory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "BG IPTV Player");
+            Directory.CreateDirectory(directory);
+            var name = SanitizeFileName(channel.Name);
+            var path = Path.Combine(directory, $"{name}_{DateTime.Now:yyyyMMdd_HHmmss}.png");
+            if (_mediaPlayer.TakeSnapshot(0, path, 0, 0))
+                SetStatus($"{L("Ekran görüntüsü kaydedildi")}: {path}");
+            else
+                SetStatus(L("Ekran görüntüsü alınamadı."));
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write("Ekran görüntüsü alınamadı", ex);
+            SetStatus(L("Ekran görüntüsü alınamadı."));
+        }
+    }
+
+    private static string SanitizeFileName(string name)
+    {
+        var safe = new string(name.Select(ch => Path.GetInvalidFileNameChars().Contains(ch) ? '_' : ch).ToArray());
+        return safe.Length > 60 ? safe[..60].TrimEnd() : safe;
+    }
+
+    private void OpenLogFile_Click(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Directory.CreateDirectory(AppLog.DirectoryPath);
+            if (!File.Exists(AppLog.FilePath)) AppLog.Write("Günlük dosyası oluşturuldu");
+            Process.Start(new ProcessStartInfo(AppLog.FilePath) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write("Günlük dosyası açılamadı", ex);
+        }
+    }
+
+    private void ReportIssue_Click(object? sender, RoutedEventArgs e) =>
+        OpenExternalUrl("https://github.com/berkguclukol/bg-iptv-player/issues/new");
 
     private void OpenGithub_Click(object? sender, RoutedEventArgs e) =>
         OpenExternalUrl("https://github.com/berkguclukol/bg-iptv-player");
@@ -2959,7 +4327,7 @@ public partial class MainWindow : Window
 public enum ContentKind { Live, Movie, Series }
 public enum SeriesBrowserLevel { Shows, Seasons, Episodes }
 public enum MediaBrowserItemKind { Channel, Series, Season, Episode }
-public enum LibraryGroupKind { Regular, Favorites, Recent, ContinueWatching }
+public enum LibraryGroupKind { Regular, Favorites, Recent, ContinueWatching, RecentlyAdded, Collection }
 public enum PlaylistSourceKind { Standard, Xtream }
 
 public readonly record struct XtreamCredentials(string Server, string Username, string Password);
@@ -2984,7 +4352,12 @@ public sealed record Channel(string Name, string Url, string Group, string? Logo
         return hash.ToString("X16");
     }
 }
-public sealed record ChannelGroup(string Name, int Count, LibraryGroupKind Kind);
+public sealed record ChannelGroup(string Name, int Count, LibraryGroupKind Kind, string? Key = null);
+
+public sealed record CollectionItem(string Name, int Count)
+{
+    public string CountText => $"{Count:N0} {Localization.T("içerik")}";
+}
 
 public sealed record SeriesMetadata(string Title, int? Season, int? Episode)
 {
@@ -3126,14 +4499,22 @@ public sealed class EpgSnapshot
 
 public sealed class EpgProgrammeItem
 {
-    public EpgProgrammeItem(EpgProgramme programme, DateTimeOffset now)
+    public EpgProgrammeItem(EpgProgramme programme, DateTimeOffset now, Channel? channel = null, bool showDate = false)
     {
         Title = programme.Title;
         Description = programme.Description;
         Category = programme.Category;
-        TimeText = $"{programme.Start:HH:mm}\n{programme.Stop:HH:mm}";
+        TimeText = showDate
+            ? $"{programme.Start:dd.MM}\n{programme.Start:HH:mm}"
+            : $"{programme.Start:HH:mm}\n{programme.Stop:HH:mm}";
         IsCurrent = programme.Start <= now && programme.Stop > now;
+        Channel = channel;
+        ChannelName = channel?.Name ?? "";
     }
+
+    public Channel? Channel { get; }
+    public string ChannelName { get; }
+    public bool HasChannel => Channel is not null;
 
     public string Title { get; }
     public string? Description { get; }
@@ -3141,9 +4522,13 @@ public sealed class EpgProgrammeItem
     public string TimeText { get; }
     public bool IsCurrent { get; }
     public string StatusText => Localization.T("ŞİMDİ YAYINDA");
-    public IBrush Background => new SolidColorBrush(Color.Parse(IsCurrent ? "#2D333C" : "#171A1F"));
-    public IBrush BorderBrush => new SolidColorBrush(Color.Parse(IsCurrent ? "#F2622E" : "#262B33"));
-    public IBrush TimeForeground => new SolidColorBrush(Color.Parse(IsCurrent ? "#FF8A5C" : "#8791A0"));
+    public IBrush Background => AppTheme.Brush(IsCurrent ? "Surface3Bg" : "CardBg");
+    public IBrush BorderBrush => IsCurrent
+        ? new SolidColorBrush(Color.Parse(Preferences.Current.AccentColor))
+        : AppTheme.Brush("BorderBg");
+    public IBrush TimeForeground => IsCurrent
+        ? new SolidColorBrush(Color.Parse(ChannelLogo.AccentColor))
+        : AppTheme.Brush("TextFaint2Bg");
 }
 
 public sealed class LibraryState
@@ -3154,6 +4539,8 @@ public sealed class LibraryState
 public sealed class LibraryItemState
 {
     public ContentKind Kind { get; set; }
+    public long WatchedSeconds { get; set; }
+    public int PlayCount { get; set; }
     public bool IsFavorite { get; set; }
     public DateTimeOffset? LastWatchedAt { get; set; }
     public long PositionMs { get; set; }
