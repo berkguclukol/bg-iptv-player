@@ -135,6 +135,9 @@ public partial class MainWindow : Window
         TmdbKeyBox.Text = Preferences.Current.TmdbApiKey ?? "";
         DisplayNameBox.Text = Preferences.Current.DisplayName ?? "";
         DisplayNameBox.Watermark = Environment.UserName;
+        ChannelLogo.DownloadsDisabled = Preferences.Current.DisableLogos;
+        HomeBackdrop.IsVisible = !Preferences.Current.LowPowerMode;
+        RefreshPerformanceSection();
         RefreshParentalView();
         RefreshCollectionsView();
         ResumeLastChannelSwitch.IsChecked = Preferences.Current.ResumeLastChannel;
@@ -148,7 +151,7 @@ public partial class MainWindow : Window
         Timeline.AddHandler(PointerPressedEvent, Timeline_PointerPressed, RoutingStrategies.Tunnel, true);
         Timeline.AddHandler(PointerReleasedEvent, Timeline_PointerReleased, RoutingStrategies.Tunnel | RoutingStrategies.Bubble, true);
         Core.Initialize();
-        _libVlc = new LibVLC("--network-caching=1800", "--http-reconnect", "--no-video-title-show");
+        _libVlc = new LibVLC(BuildVlcOptions());
         _mediaPlayer = new MediaPlayer(_libVlc);
         _mediaPlayer.Volume = 80;
         PlayerView.MediaPlayer = _mediaPlayer;
@@ -237,6 +240,64 @@ public partial class MainWindow : Window
         if (argument is not null) Dispatcher.UIThread.Post(async () => await LoadPlaylistAsync(argument));
         else if (active is not null) Dispatcher.UIThread.Post(async () => await LoadPlaylistEntryAsync(active));
         else LoadingOverlay.IsVisible = false;
+    }
+
+    // Zayif bilgisayar ve yavas baglanti icin acilis secenekleri.
+    private static string[] BuildVlcOptions()
+    {
+        var options = new List<string>
+        {
+            $"--network-caching={Preferences.Current.NetworkCaching}",
+            "--http-reconnect",
+            "--no-video-title-show"
+        };
+
+        options.Add(Preferences.Current.HardwareDecoding switch
+        {
+            "none" => "--avcodec-hw=none",
+            "d3d11" => "--avcodec-hw=d3d11va",
+            _ => "--avcodec-hw=any"
+        });
+
+        if (Preferences.Current.LowPowerMode)
+        {
+            options.Add("--avcodec-skiploopfilter=all");
+            options.Add("--deinterlace=0");
+            options.Add("--no-audio-time-stretch");
+        }
+
+        return [.. options];
+    }
+
+    // Yayin basina uygulanan secenekler; ayar degisince yeniden baslatma gerekmez.
+    private void ApplyStreamOptions(Media media)
+    {
+        media.AddOption($":network-caching={Preferences.Current.NetworkCaching}");
+        media.AddOption(":http-reconnect");
+        media.AddOption($":freetype-rel-fontsize={Preferences.Current.SubtitleFontSize}");
+        media.AddOption(Preferences.Current.HardwareDecoding switch
+        {
+            "none" => ":avcodec-hw=none",
+            "d3d11" => ":avcodec-hw=d3d11va",
+            _ => ":avcodec-hw=any"
+        });
+
+        switch (Preferences.Current.StreamQuality)
+        {
+            case "720":
+                media.AddOption(":adaptive-maxheight=720");
+                break;
+            case "480":
+                media.AddOption(":adaptive-maxheight=480");
+                break;
+            case "lowest":
+                media.AddOption(":adaptive-logic=lowest");
+                break;
+        }
+
+        if (!Preferences.Current.LowPowerMode) return;
+        media.AddOption(":avcodec-skiploopfilter=all");
+        media.AddOption(":deinterlace=0");
     }
 
     private static HttpClient CreateUpdateClient()
@@ -1091,8 +1152,9 @@ public partial class MainWindow : Window
         var regularGroups = sectionChannels
             .GroupBy(c => c.Group)
             .Where(g => !IsGroupHidden(g.Key) && !IsGroupLocked(g.Key))
-            .Select(g => new ChannelGroup(g.Key, g.Count(), LibraryGroupKind.Regular))
-            .OrderBy(g => ContainsAdult(g.Name) ? 1 : 0)
+            .Select(g => new ChannelGroup(g.Key, g.Count(), LibraryGroupKind.Regular, null, IsGroupFavorite(g.Key)))
+            .OrderBy(g => g.IsFavorite ? 0 : 1)
+            .ThenBy(g => ContainsAdult(g.Name) ? 1 : 0)
             .ThenBy(g => g.Name, StringComparer.CurrentCultureIgnoreCase)
             .ToList();
 
@@ -1761,9 +1823,7 @@ public partial class MainWindow : Window
         PlayerView.IsVisible = true;
         _media?.Dispose();
         _media = new Media(_libVlc, new Uri(channel.Url));
-        _media.AddOption(":network-caching=1800");
-        _media.AddOption(":http-reconnect");
-        _media.AddOption($":freetype-rel-fontsize={Preferences.Current.SubtitleFontSize}");
+        ApplyStreamOptions(_media);
         NowPlaying.Text = channel.Name;
         MediaInfoBadge.IsVisible = false;
         NowPlayingLogo.LogoUrl = channel.LogoUrl;
@@ -3421,6 +3481,7 @@ public partial class MainWindow : Window
         SetSettingsTab(SettingsTabPlaylists, SettingsTabPlaylistsIcon, SettingsSectionPlaylists, section == "playlists");
         SetSettingsTab(SettingsTabGeneral, SettingsTabGeneralIcon, SettingsSectionGeneral, section == "general");
         SetSettingsTab(SettingsTabUpdate, SettingsTabUpdateIcon, SettingsSectionUpdate, section == "update");
+        SetSettingsTab(SettingsTabPerformance, SettingsTabPerformanceIcon, SettingsSectionPerformance, section == "performance");
         SetSettingsTab(SettingsTabStats, SettingsTabStatsIcon, SettingsSectionStats, section == "stats");
         SetSettingsTab(SettingsTabPrivacy, SettingsTabPrivacyIcon, SettingsSectionPrivacy, section == "privacy");
         SetSettingsTab(SettingsTabAbout, SettingsTabAboutIcon, SettingsSectionAbout, section == "about");
@@ -3429,6 +3490,7 @@ public partial class MainWindow : Window
         {
             "general" => L("Genel"),
             "update" => L("Güncelleme"),
+            "performance" => L("Performans"),
             "stats" => L("İstatistikler"),
             "privacy" => L("Gizlilik"),
             "about" => L("Hakkında"),
@@ -3437,6 +3499,7 @@ public partial class MainWindow : Window
 
         if (section == "update") RefreshUpdateSection();
         if (section == "stats") RefreshStatsSection();
+        if (section == "performance") RefreshPerformanceSection();
         if (section != "privacy") return;
         SettingsDataPathText.Text = SettingsDirectory;
         SettingsPrivacyStatus.IsVisible = false;
@@ -3571,6 +3634,70 @@ public partial class MainWindow : Window
         return minutes == 0 ? $"{hours} sa" : $"{hours} sa {minutes} dk";
     }
 
+    private void RefreshPerformanceSection()
+    {
+        SelectChip(HardwareDecodingChips, Preferences.Current.HardwareDecoding);
+        SelectChip(NetworkCachingChips, Preferences.Current.NetworkCaching.ToString(CultureInfo.InvariantCulture));
+        SelectChip(StreamQualityChips, Preferences.Current.StreamQuality);
+        LowPowerSwitch.IsChecked = Preferences.Current.LowPowerMode;
+        DisableLogosSwitch.IsChecked = Preferences.Current.DisableLogos;
+    }
+
+    private static void SelectChip(Panel chips, string value)
+    {
+        foreach (var chip in chips.Children.OfType<Button>())
+            chip.Classes.Set("active", chip.Tag as string == value);
+    }
+
+    private void SetHardwareDecoding_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string mode }) return;
+        Preferences.Current.HardwareDecoding = mode;
+        Preferences.Save();
+        RefreshPerformanceSection();
+    }
+
+    private void SetNetworkCaching_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string value } ||
+            !int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var milliseconds)) return;
+
+        Preferences.Current.NetworkCaching = milliseconds;
+        Preferences.Save();
+        RefreshPerformanceSection();
+    }
+
+    private void SetStreamQuality_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string quality }) return;
+        Preferences.Current.StreamQuality = quality;
+        Preferences.Save();
+        RefreshPerformanceSection();
+    }
+
+    private void LowPowerMode_Changed(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleSwitch toggle) return;
+        var enabled = toggle.IsChecked == true;
+        if (Preferences.Current.LowPowerMode == enabled) return;
+
+        Preferences.Current.LowPowerMode = enabled;
+        Preferences.Save();
+        HomeBackdrop.IsVisible = !enabled;
+    }
+
+    private void DisableLogos_Changed(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleSwitch toggle) return;
+        var enabled = toggle.IsChecked == true;
+        if (Preferences.Current.DisableLogos == enabled) return;
+
+        Preferences.Current.DisableLogos = enabled;
+        Preferences.Save();
+        ChannelLogo.DownloadsDisabled = enabled;
+        if (_channels.Count > 0) RefreshGroups(preserveSelection: true, resetSeriesBrowser: false);
+    }
+
     private void ResetStats_Click(object? sender, RoutedEventArgs e)
     {
         foreach (var item in _libraryState.Items.Values)
@@ -3636,6 +3763,41 @@ public partial class MainWindow : Window
 
         OpenLibrary(channel.Kind);
         PlayChannel(channel);
+    }
+
+    private static bool IsGroupFavorite(string group) =>
+        Preferences.Current.FavoriteGroups.Contains(group, StringComparer.CurrentCultureIgnoreCase);
+
+    // Menu her acilisinda grubun durumuna gore etiketlenir; ozel gruplarda
+    // (favoriler, son izlenenler, koleksiyonlar) hicbir madde islemedigi icin acilmaz.
+    private void GroupContextMenu_Opening(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        if (sender is not ContextMenu { DataContext: ChannelGroup group } menu) return;
+
+        if (group.Kind != LibraryGroupKind.Regular)
+        {
+            e.Cancel = true;
+            return;
+        }
+
+        var favorite = menu.Items.OfType<MenuItem>().FirstOrDefault(item => item.Name == "FavoriteGroupMenu");
+        if (favorite is not null)
+            favorite.Header = L(IsGroupFavorite(group.Name) ? "Favorilerden çıkar" : "Favorilere ekle");
+    }
+
+    // Favori gruplar listenin en ustunde, yildizla isaretli durur.
+    private void ToggleFavoriteGroup_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { DataContext: ChannelGroup group }) return;
+        if (group.Kind != LibraryGroupKind.Regular) return;
+
+        if (IsGroupFavorite(group.Name))
+            Preferences.Current.FavoriteGroups.RemoveAll(g => string.Equals(g, group.Name, StringComparison.CurrentCultureIgnoreCase));
+        else
+            Preferences.Current.FavoriteGroups.Add(group.Name);
+
+        Preferences.Save();
+        RefreshGroups(preserveSelection: true, resetSeriesBrowser: false);
     }
 
     private bool IsGroupLocked(string group) =>
@@ -4431,7 +4593,7 @@ public sealed record Channel(string Name, string Url, string Group, string? Logo
         return hash.ToString("X16");
     }
 }
-public sealed record ChannelGroup(string Name, int Count, LibraryGroupKind Kind, string? Key = null);
+public sealed record ChannelGroup(string Name, int Count, LibraryGroupKind Kind, string? Key = null, bool IsFavorite = false);
 
 public sealed record CollectionItem(string Name, int Count)
 {

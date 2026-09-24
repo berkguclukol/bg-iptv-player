@@ -26,6 +26,12 @@ public sealed class AppPreferences
     public List<string> HiddenGroups { get; set; } = [];
     public List<string> LockedGroups { get; set; } = [];
     public string? ParentalPinHash { get; set; }
+    public List<string> FavoriteGroups { get; set; } = [];
+    public string HardwareDecoding { get; set; } = "auto";
+    public int NetworkCaching { get; set; } = 1800;
+    public string StreamQuality { get; set; } = "auto";
+    public bool LowPowerMode { get; set; }
+    public bool DisableLogos { get; set; }
 }
 
 public static class Preferences

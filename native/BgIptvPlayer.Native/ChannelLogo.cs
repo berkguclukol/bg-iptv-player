@@ -28,6 +28,9 @@ public sealed class ChannelLogo : Grid
 
     // Acik temada yer tutucu kartinin zemini de acilir.
     public static bool PlaceholderIsLight { get; set; }
+
+    // Yavas baglantilarda logo indirmeleri yayinla bant genisligi icin yarisir.
+    public static bool DownloadsDisabled { get; set; }
     public static readonly string CacheDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BgIptvPlayer", "logos");
     private static readonly ConcurrentDictionary<string, Task<Bitmap?>> Cache = new(StringComparer.OrdinalIgnoreCase);
@@ -169,6 +172,7 @@ public sealed class ChannelLogo : Grid
         _image.IsVisible = false;
         _image.Source = null;
         _placeholder.IsVisible = true;
+        if (DownloadsDisabled) return;
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)) return;
 
         try
