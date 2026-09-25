@@ -15,9 +15,11 @@ using System.Threading.Tasks;
 using System.Xml;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
+using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Styling;
@@ -55,12 +57,15 @@ public partial class MainWindow : Window
     private Channel? _playingChannel;
     private Channel? _lastPlayingChannel;
     private DateTime _selectedEpgDate = DateTime.Today;
+    private EpgProgramme? _catchupProgramme;
+    private bool _catchupAlternateTried;
     private SeriesBrowserLevel _seriesBrowserLevel = SeriesBrowserLevel.Shows;
     private string? _selectedSeriesTitle;
     private int? _selectedSeriesSeason;
     private bool _isPlayerFullscreen;
     private bool _epgPanelWasVisibleBeforeFullscreen;
     private bool _fullscreenControlsVisible;
+    private bool _fullscreenControlsPinned;
     private bool _fullscreenControlsRevealArmed = true;
     private bool _historyRecordedForCurrentPlayback;
     private bool _suppressGroupSelection;
@@ -79,6 +84,12 @@ public partial class MainWindow : Window
     private Slider? _fullscreenTimeline;
     private TextBlock? _fullscreenTimeLabel;
     private TextBlock? _fullscreenNowPlaying;
+    private TextBlock? _fullscreenStatus;
+    private TextBlock? _fullscreenKindText;
+    private TextBlock? _fullscreenMediaInfoText;
+    private Border? _fullscreenKindBadge;
+    private Border? _fullscreenMediaInfoBadge;
+    private ChannelLogo? _fullscreenLogo;
     private Border? _fullscreenVolumeFill;
     private Avalonia.Controls.Shapes.Ellipse? _fullscreenVolumeThumb;
     private TextBlock? _fullscreenVolumeText;
@@ -89,6 +100,7 @@ public partial class MainWindow : Window
     private Avalonia.Controls.Shapes.Path? _fullscreenPlayPauseIcon;
     private Avalonia.Controls.Shapes.Path? _fullscreenVolumeWaveIcon;
     private Avalonia.Controls.Shapes.Path? _fullscreenVolumeMutedIcon;
+    private Button? _fullscreenPlayPauseButton;
     private Button? _fullscreenPreviousChannelButton;
     private Button? _fullscreenLastChannelButton;
     private Button? _fullscreenNextChannelButton;
@@ -162,7 +174,17 @@ public partial class MainWindow : Window
         PositionChanged += (_, _) => UpdatePlayerOverlayBounds();
         Resized += (_, _) => UpdatePlayerOverlayBounds();
         _fullscreenControlsTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
-        _fullscreenControlsTimer.Tick += (_, _) => HideFullscreenControls();
+        _fullscreenControlsTimer.Tick += (_, _) =>
+        {
+            // Imlec cubugun uzerindeyse ya da bir menu acikken cubuk kaybolmaz;
+            // eskiden 4 saniye dolunca tiklamanin ortasinda kayboluyordu.
+            if (_fullscreenControlsPinned)
+            {
+                RestartFullscreenHideTimer();
+                return;
+            }
+            HideFullscreenControls();
+        };
         _fullscreenControlsRevealTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(450) };
         _fullscreenControlsRevealTimer.Tick += (_, _) =>
         {
@@ -751,9 +773,25 @@ public partial class MainWindow : Window
                 : (ReadJsonString(element, "container_extension")?.TrimStart('.') ?? "mp4");
             var section = kind == ContentKind.Live ? "live" : "movie";
             var url = $"{credentials.Server}/{section}/{Uri.EscapeDataString(credentials.Username)}/{Uri.EscapeDataString(credentials.Password)}/{id}.{extension}";
-            result.Add(new Channel(name, url, group, logo, kind, tvgId));
+            var hasArchive = kind == ContentKind.Live && ReadJsonString(element, "tv_archive") is "1";
+            result.Add(new Channel(name, url, group, logo, kind, tvgId)
+            {
+                StreamId = id,
+                CatchupDays = hasArchive ? Math.Max(1, ReadJsonInt(element, "tv_archive_duration")) : 0
+            });
         }
         return result;
+    }
+
+    private static int ReadJsonInt(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property)) return 0;
+        return property.ValueKind switch
+        {
+            JsonValueKind.Number when property.TryGetInt32(out var number) => number,
+            JsonValueKind.String when int.TryParse(property.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) => parsed,
+            _ => 0
+        };
     }
 
     private static string? ReadJsonString(JsonElement element, string propertyName)
@@ -930,7 +968,13 @@ public partial class MainWindow : Window
                 group,
                 ReadAttribute(info, "tvg-logo"),
                 ClassifyContent(url, group, name),
-                ReadAttribute(info, "tvg-id")));
+                ReadAttribute(info, "tvg-id"))
+            {
+                CatchupDays = ReadCatchupDays(info),
+                CatchupMode = ReadAttribute(info, "catchup"),
+                CatchupSource = ReadAttribute(info, "catchup-source"),
+                StreamId = ReadAttribute(info, "xui-id") ?? ReadAttribute(info, "tvg-chno")
+            });
             info = null;
         }
         return result;
@@ -947,18 +991,33 @@ public partial class MainWindow : Window
         return L("İsimsiz kanal");
     }
 
+    // Ayni bilgi saglayiciya gore timeshift, catchup-days veya tvg-rec olarak gelir.
+    private static int ReadCatchupDays(string line)
+    {
+        foreach (var name in new[] { "timeshift", "catchup-days", "tvg-rec", "catchup-time" })
+            if (ReadAttribute(line, name) is { Length: > 0 } value &&
+                int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var days) &&
+                days > 0)
+                return name == "catchup-time" ? Math.Max(1, days / 86400) : days;
+        return 0;
+    }
+
     private static string? ReadAttribute(string line, string name)
     {
         var match = Regex.Match(line, $"(?:^|\\s){Regex.Escape(name)}=\"([^\"]*)\"", RegexOptions.IgnoreCase);
         return match.Success ? match.Groups[1].Value.Trim() : null;
     }
 
+    /// <summary>Saglayicilarin sundugu en uzun arsiv suresi; EPG bu kadar geriye saklanir.</summary>
+    private const int MaxCatchupDays = 14;
+
     private static EpgSnapshot ParseXmlTv(string path)
     {
         var snapshot = new EpgSnapshot();
         var now = DateTimeOffset.Now;
-        var firstDay = DateTime.Today;
-        var lastDayExclusive = firstDay.AddDays(7);
+        // Arsiv icin gecmis gunler de saklanir; dosyada ne kadar varsa o kadari okunur.
+        var firstDay = DateTime.Today.AddDays(-MaxCatchupDays);
+        var lastDayExclusive = DateTime.Today.AddDays(7);
         using var reader = XmlReader.Create(path, new XmlReaderSettings
         {
             DtdProcessing = DtdProcessing.Ignore,
@@ -1804,17 +1863,34 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Arsivde iki farkli adres bicimi var; ilki calismazsa digeri denenir.
+        if (_catchupProgramme is { } pending && !_catchupAlternateTried)
+        {
+            _catchupAlternateTried = true;
+            _playbackRetryCount++;
+            SetStatus(L("Arşiv adresi yeniden deneniyor..."));
+            DispatcherTimer.RunOnce(() => PlayCatchup(channel, pending, alternate: true, isRetry: true), TimeSpan.FromSeconds(1));
+            return;
+        }
+
         _playbackRetryCount++;
         SetStatus($"{L("Yayın açılamadı, yeniden deneniyor")} ({_playbackRetryCount}/2)");
         DispatcherTimer.RunOnce(() =>
         {
-            if (_playingChannel == channel) PlayChannel(channel, isRetry: true);
+            if (_playingChannel != channel) return;
+            if (_catchupProgramme is { } current) PlayCatchup(channel, current, _catchupAlternateTried, isRetry: true);
+            else PlayChannel(channel, isRetry: true);
         }, TimeSpan.FromSeconds(2));
     }
 
-    private void PlayChannel(Channel channel, bool isRetry = false)
+    private void PlayChannel(Channel channel, bool isRetry = false, string? overrideUrl = null, EpgProgramme? catchup = null)
     {
         if (!isRetry) _playbackRetryCount = 0;
+        if (catchup is null && overrideUrl is null)
+        {
+            _catchupProgramme = null;
+            _catchupAlternateTried = false;
+        }
         SaveCurrentPlaybackProgress();
         if (_playingChannel is { } current && !string.Equals(current.Url, channel.Url, StringComparison.OrdinalIgnoreCase))
             _lastPlayingChannel = current;
@@ -1822,15 +1898,16 @@ public partial class MainWindow : Window
         PlayerPlaceholder.IsVisible = false;
         PlayerView.IsVisible = true;
         _media?.Dispose();
-        _media = new Media(_libVlc, new Uri(channel.Url));
+        _media = new Media(_libVlc, new Uri(overrideUrl ?? channel.Url));
         ApplyStreamOptions(_media);
-        NowPlaying.Text = channel.Name;
+        NowPlaying.Text = catchup is null ? channel.Name : $"{channel.Name} — {catchup.Title}";
         MediaInfoBadge.IsVisible = false;
         NowPlayingLogo.LogoUrl = channel.LogoUrl;
         NowPlayingLogo.Initials = channel.Initials;
         NowPlayingLogo.IsVisible = true;
-        PlaybackKindBadge.Text = channel.Badge;
-        _playingContent = channel.Kind;
+        PlaybackKindBadge.Text = catchup is null ? channel.Badge : L("ARŞİV");
+        // Arsiv kaydi canli degil; zaman cubugu ve sarma acik olmali.
+        _playingContent = catchup is null ? channel.Kind : ContentKind.Movie;
         _playingChannel = channel;
         if (Preferences.Current.LastChannelId != channel.Id)
         {
@@ -1841,9 +1918,12 @@ public partial class MainWindow : Window
         // EPG verisini hazırla, ancak oynatma alanını kullanıcı istemeden daraltma.
         UpdateEpgPanel(channel, false);
         _historyRecordedForCurrentPlayback = false;
-        _pendingResumePosition = GetResumePosition(channel);
+        // Canli kanalin kaldigi yer arsiv kaydi icin anlamsiz.
+        _pendingResumePosition = catchup is null ? GetResumePosition(channel) : null;
         UpdateFavoriteButton();
-        PlaybackStatus.Text = L("Yayına bağlanılıyor...");
+        PlaybackStatus.Text = catchup is null
+            ? L("Yayına bağlanılıyor...")
+            : $"{catchup.Start.LocalDateTime:d MMMM HH:mm} – {catchup.Stop.LocalDateTime:HH:mm}";
         PlayPauseButton.IsEnabled = true;
         TrackButton.IsEnabled = false;
         UpdateChannelNavigationButtons();
@@ -1853,11 +1933,27 @@ public partial class MainWindow : Window
         UpdateSeekControls(false);
         TimelinePanel.IsVisible = false;
         if (!_isPlayerFullscreen) PlayerLayout.RowDefinitions = new RowDefinitions("*,Auto");
-        TimeLabel.Text = "CANLI";
+        TimeLabel.Text = catchup is null ? L("CANLI") : L("ARŞİV");
         _mediaPlayer.Play(_media);
         _mediaPlayer.SetRate((float)Preferences.Current.PlaybackRate);
         _mediaPlayer.AspectRatio = Preferences.Current.AspectRatio.Length == 0 ? null : Preferences.Current.AspectRatio;
         Dispatcher.UIThread.Post(ShowPlayerOverlay);
+    }
+
+    // Yayin akisindaki bitmis bir programi arsivden oynatir.
+    private void PlayCatchup(Channel channel, EpgProgramme programme, bool alternate = false, bool isRetry = false)
+    {
+        var playlist = _playlists.FirstOrDefault(entry => entry.IsActive);
+        var url = Catchup.BuildUrl(channel, playlist, programme.Start, programme.Stop - programme.Start, alternate);
+        if (url is null)
+        {
+            SetStatus(L("Bu program arşivde bulunamadı."));
+            return;
+        }
+
+        if (!isRetry) _catchupAlternateTried = false;
+        PlayChannel(channel, isRetry, url, programme);
+        _catchupProgramme = programme;
     }
 
     private void StopPlaybackForNavigation()
@@ -2026,14 +2122,20 @@ public partial class MainWindow : Window
         EpgDateText.Text = _selectedEpgDate.Date == DateTime.Today
             ? L("BUGÜN")
             : _selectedEpgDate.ToString("d MMMM dddd", CultureInfo.CurrentCulture).ToUpper(CultureInfo.CurrentCulture);
-        EpgPreviousDayButton.IsEnabled = _selectedEpgDate.Date > DateTime.Today;
+        EpgPreviousDayButton.IsEnabled = _selectedEpgDate.Date > EarliestEpgDate(channel);
         EpgNextDayButton.IsEnabled = _selectedEpgDate.Date < DateTime.Today.AddDays(6);
         var query = EpgSearchBox.Text?.Trim() ?? "";
+        var now = DateTimeOffset.Now;
+        var replayable = channel.HasCatchup && Catchup.IsSupported(channel, _playlists.FirstOrDefault(e => e.IsActive));
         var programmes = FindEpgSchedule(channel)?.Programs ?? [];
         var items = programmes
             .Where(programme => programme.Start.LocalDateTime.Date == _selectedEpgDate.Date &&
                                 (query.Length == 0 || programme.Title.Contains(query, StringComparison.CurrentCultureIgnoreCase)))
-            .Select(programme => new EpgProgrammeItem(programme, DateTimeOffset.Now))
+            .Select(programme => new EpgProgrammeItem(programme, now)
+            {
+                ReplayChannel = channel,
+                CanReplay = replayable && programme.Stop <= now && programme.Start >= channel.CatchupStart
+            })
             .ToList();
         EpgProgrammeList.ItemsSource = items;
         EpgProgrammeList.IsVisible = items.Count > 0;
@@ -2099,7 +2201,14 @@ public partial class MainWindow : Window
 
         for (var node = e.Source as StyledElement; node is not null; node = node.Parent)
         {
-            if (node is not ListBoxItem { DataContext: EpgProgrammeItem { Channel: { } channel } }) continue;
+            if (node is not ListBoxItem { DataContext: EpgProgrammeItem item }) continue;
+            if (item is { CanReplay: true, ReplayChannel: { } replayChannel })
+            {
+                e.Handled = true;
+                PlayCatchup(replayChannel, item.Source);
+                return;
+            }
+            if (item.Channel is not { } channel) continue;
             e.Handled = true;
             PlayChannel(channel);
             return;
@@ -2108,10 +2217,17 @@ public partial class MainWindow : Window
 
     private void EpgPreviousDay_Click(object? sender, RoutedEventArgs e)
     {
-        if (_selectedEpgDate.Date <= DateTime.Today) return;
+        var channel = _playingChannel;
+        if (_selectedEpgDate.Date <= EarliestEpgDate(channel)) return;
         _selectedEpgDate = _selectedEpgDate.AddDays(-1);
         RefreshEpgProgrammeList();
     }
+
+    // Arsivi olan kanalda gecmis gunlere de gidilebilir; digerlerinde bugun sinirdir.
+    private static DateTime EarliestEpgDate(Channel? channel) =>
+        channel is { HasCatchup: true }
+            ? DateTime.Today.AddDays(-Math.Min(channel.CatchupDays, MaxCatchupDays))
+            : DateTime.Today;
 
     private void EpgNextDay_Click(object? sender, RoutedEventArgs e)
     {
@@ -2842,6 +2958,30 @@ public partial class MainWindow : Window
     {
         if (_playerOverlayName is not null) _playerOverlayName.Text = NowPlaying.Text;
         if (_playerOverlayStatus is not null) _playerOverlayStatus.Text = PlaybackStatus.Text;
+        SyncFullscreenInfo();
+    }
+
+    // Tam ekran cubugu alt bardaki bilgilerin aynisini gosterir; kaynak her zaman
+    // ana penceredeki kontroller oldugu icin tek yerden kopyalanir.
+    private void SyncFullscreenInfo()
+    {
+        if (_fullscreenControlsOverlay is null) return;
+
+        if (_fullscreenNowPlaying is not null) _fullscreenNowPlaying.Text = NowPlaying.Text;
+        if (_fullscreenStatus is not null)
+        {
+            _fullscreenStatus.Text = PlaybackStatus.Text;
+            _fullscreenStatus.IsVisible = !string.IsNullOrWhiteSpace(PlaybackStatus.Text);
+        }
+        if (_fullscreenKindText is not null) _fullscreenKindText.Text = PlaybackKindBadge.Text;
+        if (_fullscreenMediaInfoText is not null) _fullscreenMediaInfoText.Text = MediaInfoText.Text;
+        if (_fullscreenMediaInfoBadge is not null) _fullscreenMediaInfoBadge.IsVisible = MediaInfoBadge.IsVisible;
+        if (_fullscreenLogo is not null)
+        {
+            _fullscreenLogo.LogoUrl = NowPlayingLogo.LogoUrl;
+            _fullscreenLogo.Initials = NowPlayingLogo.Initials;
+            _fullscreenLogo.IsVisible = NowPlayingLogo.IsVisible;
+        }
     }
 
     private void UpdatePlayerOverlayBounds()
@@ -2959,7 +3099,7 @@ public partial class MainWindow : Window
         if (!_isPlayerFullscreen || _fullscreenControlsOverlay is null || _fullscreenControlsVisible) return;
         _fullscreenControlsVisible = true;
         _fullscreenControlsRevealArmed = false;
-        if (_fullscreenNowPlaying is not null) _fullscreenNowPlaying.Text = NowPlaying.Text;
+        SyncFullscreenInfo();
         UpdateFullscreenVolumeBar(VolumeSlider.Value);
         UpdatePlayPauseIcons(_mediaPlayer.IsPlaying);
         UpdateFullscreenControlsOverlayBounds();
@@ -2972,6 +3112,7 @@ public partial class MainWindow : Window
         _fullscreenControlsTimer.Stop();
         if (!_isPlayerFullscreen || !_fullscreenControlsVisible) return;
         _fullscreenControlsVisible = false;
+        _fullscreenControlsPinned = false;
         _fullscreenControlsOverlay?.Hide();
         _fullscreenControlsRevealArmed = false;
         _fullscreenControlsRevealTimer.Stop();
@@ -3011,6 +3152,77 @@ public partial class MainWindow : Window
             TextTrimming = TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center
         };
+        _fullscreenStatus = new TextBlock
+        {
+            Text = PlaybackStatus.Text,
+            Foreground = new SolidColorBrush(Color.Parse("#A3ABB8")),
+            FontSize = 10,
+            Margin = new Avalonia.Thickness(0, 5, 0, 0),
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
+        _fullscreenKindText = new TextBlock
+        {
+            Text = PlaybackKindBadge.Text,
+            Foreground = new SolidColorBrush(Color.Parse("#FF97A6")),
+            FontSize = 8
+        };
+        _fullscreenKindBadge = new Border
+        {
+            Background = new SolidColorBrush(Color.Parse("#40EA2E4E")),
+            CornerRadius = new Avalonia.CornerRadius(100),
+            Padding = new Avalonia.Thickness(8, 3),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Avalonia.Thickness(0, 0, 7, 0),
+            Child = _fullscreenKindText
+        };
+        _fullscreenMediaInfoText = new TextBlock
+        {
+            Text = MediaInfoText.Text,
+            Foreground = new SolidColorBrush(Color.Parse("#A3ABB8")),
+            FontSize = 8,
+            FontWeight = FontWeight.Bold
+        };
+        _fullscreenMediaInfoBadge = new Border
+        {
+            Background = new SolidColorBrush(Color.Parse("#242931")),
+            BorderBrush = new SolidColorBrush(Color.Parse("#343B45")),
+            BorderThickness = new Avalonia.Thickness(1),
+            CornerRadius = new Avalonia.CornerRadius(100),
+            Padding = new Avalonia.Thickness(8, 2),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Avalonia.Thickness(0, 0, 9, 0),
+            IsVisible = MediaInfoBadge.IsVisible,
+            Child = _fullscreenMediaInfoText
+        };
+        _fullscreenLogo = new ChannelLogo
+        {
+            Width = 76,
+            Height = 46,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Avalonia.Thickness(0, 0, 14, 0),
+            IsVisible = NowPlayingLogo.IsVisible
+        };
+
+        var fullscreenTitleRow = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*") };
+        fullscreenTitleRow.Children.Add(_fullscreenKindBadge);
+        Grid.SetColumn(_fullscreenMediaInfoBadge, 1);
+        fullscreenTitleRow.Children.Add(_fullscreenMediaInfoBadge);
+        Grid.SetColumn(_fullscreenNowPlaying, 2);
+        fullscreenTitleRow.Children.Add(_fullscreenNowPlaying);
+
+        var fullscreenTitleStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        fullscreenTitleStack.Children.Add(fullscreenTitleRow);
+        fullscreenTitleStack.Children.Add(_fullscreenStatus);
+
+        var fullscreenInfoPanel = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("Auto,*"),
+            Margin = new Avalonia.Thickness(0, 0, 16, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        fullscreenInfoPanel.Children.Add(_fullscreenLogo);
+        Grid.SetColumn(fullscreenTitleStack, 1);
+        fullscreenInfoPanel.Children.Add(fullscreenTitleStack);
 
         var volumeButton = CreateFullscreenVolumeButton();
         volumeButton.Click += VolumeButton_Click;
@@ -3046,18 +3258,26 @@ public partial class MainWindow : Window
         };
 
         _fullscreenPlayPauseIcon = CreatePlayPauseIcon();
-        var playPauseButton = CreateFullscreenActionButton(_fullscreenPlayPauseIcon, true);
-        playPauseButton.Click += PlayPause_Click;
+        _fullscreenPlayPauseButton = CreateFullscreenActionButton(_fullscreenPlayPauseIcon, true);
+        _fullscreenPlayPauseButton.Click += PlayPause_Click;
+        var playPauseButton = _fullscreenPlayPauseButton;
         _fullscreenPreviousChannelButton = CreateFullscreenActionButton(CreateFullscreenIcon("M6,5 L6,19 M19,5 L9,12 L19,19 Z", 20, 1.8));
         _fullscreenPreviousChannelButton.Click += PreviousChannel_Click;
         _fullscreenLastChannelButton = CreateFullscreenActionButton(CreateFullscreenIcon("M4,4 L4,9 L9,9 M5.5,7 A8,8 0 1 1 4.8,15", 21));
         _fullscreenLastChannelButton.Click += LastChannel_Click;
         _fullscreenNextChannelButton = CreateFullscreenActionButton(CreateFullscreenIcon("M18,5 L18,19 M5,5 L15,12 L5,19 Z", 20, 1.8));
         _fullscreenNextChannelButton.Click += NextChannel_Click;
+        ToolTip.SetTip(_fullscreenPlayPauseButton, L("Oynat / Duraklat") + " (Space)");
+        ToolTip.SetTip(_fullscreenPreviousChannelButton, L("Önceki kanal") + " (Page Up)");
+        ToolTip.SetTip(_fullscreenLastChannelButton, L("Son kanala dön") + " (Backspace)");
+        ToolTip.SetTip(_fullscreenNextChannelButton, L("Sonraki kanal") + " (Page Down)");
         _fullscreenRewindButton = CreateFullscreenActionButton(CreateFullscreenSeekIcon("10", rewind: true));
         _fullscreenRewindButton.Click += Rewind_Click;
         _fullscreenForwardButton = CreateFullscreenActionButton(CreateFullscreenSeekIcon("10", rewind: false));
         _fullscreenForwardButton.Click += Forward_Click;
+        ToolTip.SetTip(_fullscreenRewindButton, L("10 saniye geri") + " (←)");
+        ToolTip.SetTip(_fullscreenForwardButton, L("10 saniye ileri") + " (→)");
+        ToolTip.SetTip(volumeButton, L("Sesi aç / kapat") + " (M)");
         UpdateChannelNavigationButtons();
         UpdateSeekControls(_playingContent != ContentKind.Live && _mediaPlayer.IsSeekable && _mediaPlayer.Length > 0);
         var trackButton = CreateFullscreenMenuButton(
@@ -3070,6 +3290,9 @@ public partial class MainWindow : Window
         var exitButton = CreateFullscreenActionButton(
             CreateFullscreenIcon("M9,4 L4,4 L4,9 M15,4 L20,4 L20,9 M20,15 L20,20 L15,20 M9,20 L4,20 L4,15", 21, 1.8));
         exitButton.Click += (_, _) => SetPlayerFullscreen(false);
+        ToolTip.SetTip(trackButton, L("Ses ve altyazı"));
+        ToolTip.SetTip(optionsButton, L("Oynatma seçenekleri"));
+        ToolTip.SetTip(exitButton, L("Tam ekrandan çık") + " (Esc)");
 
         var actions = new StackPanel
         {
@@ -3094,7 +3317,7 @@ public partial class MainWindow : Window
             ColumnDefinitions = new ColumnDefinitions("*,Auto"),
             Margin = new Avalonia.Thickness(0, 8, 0, 0)
         };
-        controlRow.Children.Add(_fullscreenNowPlaying);
+        controlRow.Children.Add(fullscreenInfoPanel);
         Grid.SetColumn(actions, 1);
         controlRow.Children.Add(actions);
 
@@ -3126,8 +3349,25 @@ public partial class MainWindow : Window
             TransparencyLevelHint = [WindowTransparencyLevel.Transparent],
             Content = _fullscreenControlsOverlaySurface
         };
-        _fullscreenControlsOverlay.RequestedThemeVariant = RequestedThemeVariant;
-        _fullscreenControlsOverlay.PointerMoved += (_, _) => HandleFullscreenPointerActivity();
+        _fullscreenControlsOverlay.RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Dark;
+        ApplyFullscreenOverlayStyles(_fullscreenControlsOverlay);
+        SyncFullscreenOverlayAccent();
+
+        _fullscreenControlsOverlaySurface.PointerEntered += (_, _) =>
+        {
+            _fullscreenControlsPinned = true;
+            RestartFullscreenHideTimer();
+        };
+        _fullscreenControlsOverlaySurface.PointerExited += (_, _) =>
+        {
+            _fullscreenControlsPinned = false;
+            RestartFullscreenHideTimer();
+        };
+        _fullscreenControlsOverlay.PointerMoved += (_, _) =>
+        {
+            if (_fullscreenControlsVisible) RestartFullscreenHideTimer();
+            else HandleFullscreenPointerActivity();
+        };
         _fullscreenControlsOverlay.KeyDown += (_, e) =>
         {
             HandlePlayerShortcut(e);
@@ -3178,18 +3418,81 @@ public partial class MainWindow : Window
         return grid;
     }
 
-    private static Button CreateFullscreenActionButton(Control content, bool primary = false) => new()
+    // Renkler ve durum gecisleri katman penceresinin stillerinden gelir; boylece
+    // vurgu rengi degisince tam ekran cubugu da onu izler.
+    private static Button CreateFullscreenActionButton(Control content, bool primary = false)
     {
-        Width = primary ? 52 : 44,
-        Height = primary ? 52 : 44,
-        Padding = new Avalonia.Thickness(0),
-        CornerRadius = new Avalonia.CornerRadius(primary ? 26 : 22),
-        BorderThickness = new Avalonia.Thickness(0),
-        Background = new SolidColorBrush(Color.Parse(primary ? "#F2622E" : "#1C2026")),
-        Content = content,
-        HorizontalContentAlignment = HorizontalAlignment.Center,
-        VerticalContentAlignment = VerticalAlignment.Center
-    };
+        var button = new Button
+        {
+            Width = primary ? 52 : 44,
+            Height = primary ? 52 : 44,
+            Padding = new Avalonia.Thickness(0),
+            CornerRadius = new Avalonia.CornerRadius(primary ? 26 : 22),
+            Content = content,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center
+        };
+        button.Classes.Add("fsAction");
+        if (primary) button.Classes.Add("primary");
+        return button;
+    }
+
+    private void RestartFullscreenHideTimer()
+    {
+        _fullscreenControlsTimer.Stop();
+        _fullscreenControlsTimer.Start();
+    }
+
+    // Ana pencerenin kaynaklari ayri bir pencereye ulasmadigi icin vurgu
+    // fircalari buraya kopyalanir; ApplyAccentColor her degisiklikte cagirir.
+    private void SyncFullscreenOverlayAccent()
+    {
+        if (_fullscreenControlsOverlay is null) return;
+
+        foreach (var key in new[] { "AccentBrush", "AccentSoftBrush" })
+            if (Resources.TryGetResource(key, ActualThemeVariant, out var value) && value is not null)
+                _fullscreenControlsOverlay.Resources[key] = value;
+
+        if (_fullscreenVolumeFill is not null) _fullscreenVolumeFill.Background = CurrentAccentBrush;
+    }
+
+    private IBrush CurrentAccentBrush =>
+        Resources.TryGetResource("AccentBrush", ActualThemeVariant, out var value) && value is IBrush brush
+            ? brush
+            : new SolidColorBrush(Color.Parse(Preferences.Current.AccentColor));
+
+    // Tam ekran cubugu videonun ustunde durdugu icin her temada koyu kalir;
+    // yalnizca vurgu rengi kullanicinin secimini izler.
+    private void ApplyFullscreenOverlayStyles(Window overlay)
+    {
+        Style Rule(Func<Selector?, Selector> selector, params Setter[] setters)
+        {
+            var style = new Style(selector);
+            foreach (var setter in setters) style.Setters.Add(setter);
+            return style;
+        }
+
+        overlay.Styles.Add(Rule(x => x.OfType<Button>().Class("fsAction"),
+            new Setter(TemplatedControl.BackgroundProperty, Brushes.Transparent),
+            new Setter(TemplatedControl.BorderThicknessProperty, new Avalonia.Thickness(0))));
+
+        overlay.Styles.Add(Rule(x => x.OfType<Button>().Class("fsAction").Class(":pointerover"),
+            new Setter(TemplatedControl.BackgroundProperty, new SolidColorBrush(Color.Parse("#2D333C")))));
+
+        overlay.Styles.Add(Rule(x => x.OfType<Button>().Class("fsAction").Class(":pressed"),
+            new Setter(TemplatedControl.BackgroundProperty, new SolidColorBrush(Color.Parse("#3A424E")))));
+
+        overlay.Styles.Add(Rule(x => x.OfType<Button>().Class("fsAction").Class(":disabled"),
+            new Setter(Visual.OpacityProperty, 0.35d)));
+
+        overlay.Styles.Add(Rule(x => x.OfType<Button>().Class("fsAction").Class("primary"),
+            new Setter(TemplatedControl.BackgroundProperty, new DynamicResourceExtension("AccentBrush")),
+            new Setter(TemplatedControl.BorderBrushProperty, new DynamicResourceExtension("AccentSoftBrush")),
+            new Setter(TemplatedControl.BorderThicknessProperty, new Avalonia.Thickness(1))));
+
+        overlay.Styles.Add(Rule(x => x.OfType<Button>().Class("fsAction").Class("primary").Class(":pointerover"),
+            new Setter(TemplatedControl.BackgroundProperty, new DynamicResourceExtension("AccentSoftBrush"))));
+    }
 
     // Tam ekran ayri bir pencere oldugu icin tema sablonlari oraya ulasmiyordu ve
     // Fluent'in tutamagi ize gore kayik duruyordu. Cubuk burada elle ciziliyor:
@@ -3208,7 +3511,7 @@ public partial class MainWindow : Window
             Height = 4,
             Width = 0,
             CornerRadius = new Avalonia.CornerRadius(2),
-            Background = new SolidColorBrush(Color.Parse("#F2622E")),
+            Background = CurrentAccentBrush,
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Center
         };
@@ -3300,7 +3603,7 @@ public partial class MainWindow : Window
     {
         if (_fullscreenControlsOverlay is null) return;
 
-        var overlayHeight = _fullscreenTimelinePanel?.IsVisible == true ? 112d : 82d;
+        var overlayHeight = _fullscreenTimelinePanel?.IsVisible == true ? 134d : 104d;
         var overlayWidth = Math.Min(Math.Max(360d, Bounds.Width - 48d), 1180d);
         var left = Math.Max(0d, (Bounds.Width - overlayWidth) / 2d);
         var top = Math.Max(0d, Bounds.Height - overlayHeight - 24d);
@@ -3427,6 +3730,8 @@ public partial class MainWindow : Window
                 // Bilgi okunamazsa rozet gizli kalir; oynatma etkilenmez.
                 MediaInfoBadge.IsVisible = false;
             }
+
+            SyncFullscreenInfo();
         });
     }
 
@@ -4019,6 +4324,7 @@ public partial class MainWindow : Window
             swatch.Classes.Set("active", swatch.Tag as string == accent);
 
         ChannelLogo.AccentColor = soft;
+        SyncFullscreenOverlayAccent();
         ShowSettingsSection(_settingsSection);
     }
 
@@ -4264,6 +4570,13 @@ public partial class MainWindow : Window
         var target = panel;
         var flyout = new Flyout { Placement = PlacementMode.Top, Content = content };
         flyout.Opening += (_, _) => build(target);
+        // Menu acikken otomatik gizleme calisirsa secim yapilamadan cubuk kayboluyordu.
+        flyout.Opened += (_, _) => _fullscreenControlsPinned = true;
+        flyout.Closed += (_, _) =>
+        {
+            _fullscreenControlsPinned = false;
+            RestartFullscreenHideTimer();
+        };
         var button = CreateFullscreenActionButton(CreateFullscreenIcon(iconData, 21));
         button.Flyout = flyout;
         return button;
@@ -4575,6 +4888,23 @@ public readonly record struct XtreamCredentials(string Server, string Username, 
 
 public sealed record Channel(string Name, string Url, string Group, string? LogoUrl, ContentKind Kind, string? TvgId)
 {
+    /// <summary>Saglayicinin sundugu arsiv gun sayisi (timeshift / catchup-days / tvg-rec).</summary>
+    public int CatchupDays { get; init; }
+
+    /// <summary>catchup niteligi: default, append, shift, flussonic, xc...</summary>
+    public string? CatchupMode { get; init; }
+
+    /// <summary>catchup-source sablonu; varsa URL bundan uretilir.</summary>
+    public string? CatchupSource { get; init; }
+
+    /// <summary>Xtream akis kimligi (xui-id); timeshift adresini kurmak icin gerekir.</summary>
+    public string? StreamId { get; init; }
+
+    public bool HasCatchup => CatchupDays > 0 && Kind == ContentKind.Live;
+
+    /// <summary>Arsivin ulasabildigi en eski an.</summary>
+    public DateTimeOffset CatchupStart => DateTimeOffset.Now.AddDays(-CatchupDays);
+
     public string Id { get; } = CreateStableId(Url);
     public string Initials => string.Concat(Name.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(p => p[0])).ToUpperInvariant();
     public string Badge => Localization.T(Kind switch { ContentKind.Movie => "FİLM", ContentKind.Series => "DİZİ", _ => "CANLI" });
@@ -4718,6 +5048,40 @@ public sealed class PlaylistEntry
     public bool IsRemote => Uri.TryCreate(Path, UriKind.Absolute, out var uri) &&
                             (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
     public bool IsXtream => SourceKind == PlaylistSourceKind.Xtream;
+
+    // Eski kayitlarda bu alanlar bos; ayni bilgi liste adresinin sorgu
+    // dizesinde durdugu icin oradan tamamlanir.
+    public string? EffectiveXtreamServer => Pick(XtreamServer, OriginFromPath());
+    public string? EffectiveXtreamUsername => Pick(XtreamUsername, QueryFromPath("username"));
+    public string? EffectiveXtreamPassword => Pick(XtreamPassword, QueryFromPath("password"));
+
+    public bool HasXtreamCredentials =>
+        EffectiveXtreamServer is { Length: > 0 } &&
+        EffectiveXtreamUsername is { Length: > 0 } &&
+        EffectiveXtreamPassword is { Length: > 0 };
+
+    private static string? Pick(string? primary, string? fallback) =>
+        primary is { Length: > 0 } ? primary : fallback is { Length: > 0 } ? fallback : null;
+
+    private string? OriginFromPath() =>
+        Uri.TryCreate(Path, UriKind.Absolute, out var uri) &&
+        (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+            ? uri.GetLeftPart(UriPartial.Authority)
+            : null;
+
+    private string? QueryFromPath(string key)
+    {
+        if (!Uri.TryCreate(Path, UriKind.Absolute, out var uri)) return null;
+        foreach (var pair in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var separator = pair.IndexOf('=');
+            if (separator <= 0) continue;
+            if (!pair.AsSpan(0, separator).Equals(key, StringComparison.OrdinalIgnoreCase)) continue;
+            var value = Uri.UnescapeDataString(pair[(separator + 1)..]);
+            if (value.Length > 0) return value;
+        }
+        return null;
+    }
     public string SourceTypeText => IsXtream ? "XTREAM" : IsRemote ? "URL" : "DOSYA";
     public string DisplayPath => IsXtream ? $"{DisplayServer ?? Localization.T("Xtream sunucusu")} · {Localization.T("kullanıcı bilgileri gizli")}" : Path;
     public string ActiveText => Localization.T(IsActive ? "✓ AKTİF" : "Etkinleştir");
@@ -4742,6 +5106,8 @@ public sealed class EpgProgrammeItem
 {
     public EpgProgrammeItem(EpgProgramme programme, DateTimeOffset now, Channel? channel = null, bool showDate = false)
     {
+        Source = programme;
+        IsPast = programme.Stop <= now;
         Title = programme.Title;
         Description = programme.Description;
         Category = programme.Category;
@@ -4756,6 +5122,15 @@ public sealed class EpgProgrammeItem
     public Channel? Channel { get; }
     public string ChannelName { get; }
     public bool HasChannel => Channel is not null;
+
+    /// <summary>Arsivden oynatmak icin gereken ham program bilgisi.</summary>
+    public EpgProgramme Source { get; }
+    public bool IsPast { get; }
+
+    /// <summary>Arsivi olan kanalda bitmis programlar yeniden izlenebilir.</summary>
+    public Channel? ReplayChannel { get; init; }
+    public bool CanReplay { get; init; }
+    public string ReplayText => Localization.T("ARŞİVDEN İZLE");
 
     public string Title { get; }
     public string? Description { get; }
